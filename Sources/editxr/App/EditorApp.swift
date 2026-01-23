@@ -219,8 +219,9 @@ class EditorApp {
             if i == doc.cursorLine && !doc.hasSelection {
                 let col = min(doc.cursorColumn, line.count)
                 let before = String(line.prefix(col))
-                let cursor = "\(Theme.cursor) \(Theme.reset)"
-                let after = String(line.dropFirst(col))
+                let charAtCursor = col < line.count ? String(line[line.index(line.startIndex, offsetBy: col)]) : " "
+                let cursor = "\(Theme.cursorUnderline)\(charAtCursor)\(Theme.reset)"
+                let after = col < line.count ? String(line.dropFirst(col + 1)) : ""
                 renderedLine = before + cursor + after
             }
             

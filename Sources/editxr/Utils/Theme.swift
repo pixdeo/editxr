@@ -22,7 +22,7 @@ enum Theme {
     static let selectionBg = "\u{1B}[48;2;227;248;248m"
     static let selectionFg = "\u{1B}[38;2;26;26;26m"
     static let currentLineBg = "\u{1B}[48;2;245;245;245m"
-    static let cursor = "\u{1B}[48;2;26;26;26m\u{1B}[38;2;255;255;255m"
+    static let cursorUnderline = "\u{1B}[4m"
     static let gutter = "\u{1B}[38;2;138;138;138m"
     static let gutterBg = "\u{1B}[48;2;255;255;255m"
     static let gutterDivider = "\u{1B}[38;2;243;243;243m"
@@ -39,4 +39,5 @@ enum Theme {
     static let bold = "\u{1B}[1m"
     static let italic = "\u{1B}[3m"
     static let inverse = "\u{1B}[7m"
+    static let underline = "\u{1B}[4m"
 }
