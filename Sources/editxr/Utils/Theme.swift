@@ -1,21 +1,42 @@
 import Foundation
 
 enum Theme {
-    static let green = "\u{1B}[38;2;78;201;176m"
-    static let orange = "\u{1B}[38;2;255;165;0m"
-    static let cyan = "\u{1B}[38;2;0;212;255m"
-    static let yellow = "\u{1B}[38;2;220;220;170m"
-    static let white = "\u{1B}[38;2;255;255;255m"
-    static let gray = "\u{1B}[38;2;128;128;128m"
-    static let darkGray = "\u{1B}[38;2;90;90;90m"
-    static let black = "\u{1B}[38;2;30;30;30m"
+    // Base UI
+    static let bg = "\u{1B}[48;2;255;255;255m"
+    static let surface = "\u{1B}[48;2;245;245;245m"
+    static let surfaceSoft = "\u{1B}[48;2;243;243;243m"
+    static let border = "\u{1B}[38;2;200;200;200m"
+    static let textPrimary = "\u{1B}[38;2;26;26;26m"
+    static let textSecondary = "\u{1B}[38;2;102;102;102m"
+    static let textMuted = "\u{1B}[38;2;138;138;138m"
+    static let accent = "\u{1B}[38;2;71;209;211m"
     
+    // Status bar
+    static let statusBarBg = "\u{1B}[48;2;255;255;255m"
+    static let statusBarText = "\u{1B}[38;2;138;138;138m"
+    static let statusBarTextActive = "\u{1B}[38;2;26;26;26m"
+    static let statusBarBorder = "\u{1B}[38;2;243;243;243m"
+    static let statusBarAccent = "\u{1B}[38;2;71;209;211m"
+    
+    // Editor
+    static let selectionBg = "\u{1B}[48;2;227;248;248m"
+    static let selectionFg = "\u{1B}[38;2;26;26;26m"
+    static let currentLineBg = "\u{1B}[48;2;245;245;245m"
+    static let cursor = "\u{1B}[48;2;26;26;26m\u{1B}[38;2;255;255;255m"
+    static let gutter = "\u{1B}[38;2;138;138;138m"
+    static let gutterBg = "\u{1B}[48;2;255;255;255m"
+    static let gutterDivider = "\u{1B}[38;2;243;243;243m"
+    
+    // Syntax
+    static let keyword = "\u{1B}[38;2;71;209;211m"
+    static let comment = "\u{1B}[38;2;138;138;138m"
+    static let string = "\u{1B}[38;2;102;102;102m"
+    static let identifier = "\u{1B}[38;2;26;26;26m"
+    static let punctuation = "\u{1B}[38;2;102;102;102m"
+    
+    // Formatting
     static let reset = "\u{1B}[0m"
     static let bold = "\u{1B}[1m"
     static let italic = "\u{1B}[3m"
     static let inverse = "\u{1B}[7m"
-    
-    static let bgDark = "\u{1B}[48;2;30;30;30m"
-    static let bgLightGray = "\u{1B}[48;2;200;200;200m"
-    static let bgStatusBar = "\u{1B}[48;2;180;180;180m"
 }

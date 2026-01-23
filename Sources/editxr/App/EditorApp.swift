@@ -54,7 +54,7 @@ class EditorApp {
         var tattr = termios()
         tcgetattr(STDIN_FILENO, &tattr)
         tattr.c_lflag &= ~tcflag_t(ECHO | ICANON)
-        tattr.c_iflag &= ~tcflag_t(IXON | IXOFF)  // Disable flow control so ctrl+s works
+        tattr.c_iflag &= ~tcflag_t(IXON | IXOFF)
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &tattr)
     }
     
@@ -219,7 +219,7 @@ class EditorApp {
             if i == doc.cursorLine && !doc.hasSelection {
                 let col = min(doc.cursorColumn, line.count)
                 let before = String(line.prefix(col))
-                let cursor = "\u{1B}[7m \u{1B}[0m"
+                let cursor = "\(Theme.cursor) \(Theme.reset)"
                 let after = String(line.dropFirst(col))
                 renderedLine = before + cursor + after
             }
@@ -241,8 +241,8 @@ class EditorApp {
             return line
         }
         
-        let selStart = "\u{1B}[7m"
-        let selEnd = "\u{1B}[0m"
+        let selStart = "\(Theme.selectionBg)\(Theme.selectionFg)"
+        let selEnd = Theme.reset
         
         if isBetween {
             return selStart + line + selEnd
@@ -288,20 +288,20 @@ class EditorApp {
     
     private func renderMarkdownLine(_ line: String) -> String {
         if line.hasPrefix("# ") {
-            return "\(Theme.bold)\(Theme.yellow)\(line)\(Theme.reset)"
+            return "\(Theme.bold)\(Theme.keyword)\(line)\(Theme.reset)"
         } else if line.hasPrefix("## ") {
-            return "\(Theme.bold)\(Theme.yellow)\(line)\(Theme.reset)"
+            return "\(Theme.bold)\(Theme.keyword)\(line)\(Theme.reset)"
         } else if line.hasPrefix("### ") {
-            return "\(Theme.yellow)\(line)\(Theme.reset)"
+            return "\(Theme.keyword)\(line)\(Theme.reset)"
         } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
-            return "\(Theme.cyan)•\(Theme.reset) " + String(line.dropFirst(2))
+            return "\(Theme.accent)•\(Theme.reset) " + String(line.dropFirst(2))
         } else if line.hasPrefix("```") {
-            return "\(Theme.green)\(line)\(Theme.reset)"
+            return "\(Theme.comment)\(line)\(Theme.reset)"
         } else {
             var result = line
             result = highlightPattern(result, pattern: "\\*\\*(.+?)\\*\\*", prefix: Theme.bold, suffix: Theme.reset)
             result = highlightPattern(result, pattern: "\\*(.+?)\\*", prefix: Theme.italic, suffix: Theme.reset)
-            result = highlightPattern(result, pattern: "`(.+?)`", prefix: Theme.green, suffix: Theme.reset)
+            result = highlightPattern(result, pattern: "`(.+?)`", prefix: Theme.string, suffix: Theme.reset)
             return result
         }
     }
@@ -340,7 +340,7 @@ class EditorApp {
         let right = "\(doc.wordCount) words | Ln \(doc.cursorLine + 1), Col \(doc.cursorColumn + 1)"
         let padding = width - left.count - right.count
         let spaces = String(repeating: " ", count: max(0, padding))
-        return "\(Theme.bgStatusBar)\(Theme.black)\(left)\(spaces)\(right)\(Theme.reset)"
+        return "\(Theme.statusBarBg)\(Theme.statusBarText)\(left)\(spaces)\(right)\(Theme.reset)"
     }
     
     private func renderHelpBar(width: Int) -> String {
@@ -357,7 +357,7 @@ class EditorApp {
         
         var parts: [String] = []
         for shortcut in shortcuts {
-            parts.append("\(Theme.orange)\(shortcut.key) \(Theme.darkGray)\(shortcut.desc)\(Theme.reset)")
+            parts.append("\(Theme.accent)\(shortcut.key) \(Theme.textMuted)\(shortcut.desc)\(Theme.reset)")
         }
         
         let content = parts.joined(separator: "  ")
