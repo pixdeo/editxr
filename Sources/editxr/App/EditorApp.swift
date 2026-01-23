@@ -7,6 +7,9 @@ class EditorApp {
     
     init(state: EditorState) {
         self.state = state
+        state.onSavedIndicatorChanged = { [weak self] in
+            self?.render()
+        }
     }
     
     func start() {
@@ -32,14 +35,26 @@ class EditorApp {
         }
         sigWinChSource.resume()
         
+        hideCursor()
         render()
         dispatchMain()
+    }
+    
+    private func hideCursor() {
+        print("\u{1B}[?25l", terminator: "")
+        fflush(stdout)
+    }
+    
+    private func showCursor() {
+        print("\u{1B}[?25h", terminator: "")
+        fflush(stdout)
     }
     
     private func setInputMode() {
         var tattr = termios()
         tcgetattr(STDIN_FILENO, &tattr)
         tattr.c_lflag &= ~tcflag_t(ECHO | ICANON)
+        tattr.c_iflag &= ~tcflag_t(IXON | IXOFF)  // Disable flow control so ctrl+s works
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &tattr)
     }
     
@@ -64,7 +79,7 @@ class EditorApp {
             }
             
             switch char {
-            case Key.ctrlX:
+            case Key.ctrlQ:
                 quit()
             case Key.ctrlS:
                 state.save()
@@ -72,9 +87,14 @@ class EditorApp {
             case Key.ctrlR:
                 state.toggleViewMode()
                 render()
-            case Key.ctrlB:
-                state.toggleStatusBar()
+            case Key.ctrlH:
+                state.toggleHelp()
                 render()
+            case Key.ctrlV:
+                if state.viewMode == .plain {
+                    state.paste()
+                    render()
+                }
             case Key.enter:
                 if state.viewMode == .plain {
                     state.handleNewline()
@@ -86,9 +106,28 @@ class EditorApp {
                     render()
                 }
             default:
-                if state.viewMode == .plain && char.isLetter || char.isNumber || char.isWhitespace || char.isPunctuation || char.isSymbol {
-                    state.handleCharacter(char)
-                    render()
+                if state.viewMode == .plain {
+                    if state.document.hasSelection {
+                        switch char {
+                        case "c":
+                            state.copy()
+                            render()
+                        case "x":
+                            state.cut()
+                            render()
+                        case "d":
+                            state.deleteSelection()
+                            render()
+                        default:
+                            if char.isLetter || char.isNumber || char.isWhitespace || char.isPunctuation || char.isSymbol {
+                                state.handleCharacter(char)
+                                render()
+                            }
+                        }
+                    } else if char.isLetter || char.isNumber || char.isWhitespace || char.isPunctuation || char.isSymbol {
+                        state.handleCharacter(char)
+                        render()
+                    }
                 }
             }
         }
@@ -97,13 +136,21 @@ class EditorApp {
     private func handleArrowKey(_ key: ArrowKey) {
         switch key {
         case .up:
-            state.moveUp()
+            state.moveUp(selecting: false)
         case .down:
-            state.moveDown()
+            state.moveDown(selecting: false)
         case .left:
-            state.moveLeft()
+            state.moveLeft(selecting: false)
         case .right:
-            state.moveRight()
+            state.moveRight(selecting: false)
+        case .shiftUp:
+            state.moveUp(selecting: true)
+        case .shiftDown:
+            state.moveDown(selecting: true)
+        case .shiftLeft:
+            state.moveLeft(selecting: true)
+        case .shiftRight:
+            state.moveRight(selecting: true)
         }
         render()
     }
@@ -130,7 +177,9 @@ class EditorApp {
     
     private func renderEditor(width: Int, height: Int) -> String {
         var lines: [String] = []
-        let contentHeight = state.showStatusBar ? height - 1 : height
+        let reservedLines = 2
+        
+        let contentHeight = height - reservedLines
         
         switch state.viewMode {
         case .plain:
@@ -143,9 +192,12 @@ class EditorApp {
             lines.append("")
         }
         
-        if state.showStatusBar {
-            let statusLine = renderStatusBar(width: width)
-            lines.append(statusLine)
+        lines.append(renderStatusBar(width: width))
+        
+        if state.showHelp {
+            lines.append(renderHelpBar(width: width))
+        } else {
+            lines.append(String(repeating: " ", count: width))
         }
         
         return lines.joined(separator: "\n")
@@ -158,20 +210,68 @@ class EditorApp {
         let startLine = max(0, doc.cursorLine - height / 2)
         let endLine = min(doc.lines.count, startLine + height)
         
+        let selection = doc.selectionRange
+        
         for i in startLine..<endLine {
             let line = doc.lines[i]
-            if i == doc.cursorLine {
+            var renderedLine = renderLineWithSelection(line: line, lineIndex: i, selection: selection, doc: doc)
+            
+            if i == doc.cursorLine && !doc.hasSelection {
                 let col = min(doc.cursorColumn, line.count)
                 let before = String(line.prefix(col))
                 let cursor = "\u{1B}[7m \u{1B}[0m"
                 let after = String(line.dropFirst(col))
-                output.append(before + cursor + after)
-            } else {
-                output.append(line)
+                renderedLine = before + cursor + after
             }
+            
+            output.append(renderedLine)
         }
         
         return output
+    }
+    
+    private func renderLineWithSelection(line: String, lineIndex: Int, selection: (start: CursorPosition, end: CursorPosition)?, doc: Document) -> String {
+        guard let sel = selection else { return line }
+        
+        let isStartLine = lineIndex == sel.start.line
+        let isEndLine = lineIndex == sel.end.line
+        let isBetween = lineIndex > sel.start.line && lineIndex < sel.end.line
+        
+        if !isStartLine && !isEndLine && !isBetween {
+            return line
+        }
+        
+        let selStart = "\u{1B}[7m"
+        let selEnd = "\u{1B}[0m"
+        
+        if isBetween {
+            return selStart + line + selEnd
+        }
+        
+        if isStartLine && isEndLine {
+            let startCol = sel.start.column
+            let endCol = sel.end.column
+            let before = String(line.prefix(startCol))
+            let selected = String(line.dropFirst(startCol).prefix(endCol - startCol))
+            let after = String(line.dropFirst(endCol))
+            return before + selStart + selected + selEnd + after
+        }
+        
+        if isStartLine {
+            let startCol = sel.start.column
+            let before = String(line.prefix(startCol))
+            let selected = String(line.dropFirst(startCol))
+            return before + selStart + selected + selEnd
+        }
+        
+        if isEndLine {
+            let endCol = sel.end.column
+            let selected = String(line.prefix(endCol))
+            let after = String(line.dropFirst(endCol))
+            return selStart + selected + selEnd + after
+        }
+        
+        return line
     }
     
     private func renderMarkdownMode(width: Int, height: Int) -> [String] {
@@ -188,20 +288,20 @@ class EditorApp {
     
     private func renderMarkdownLine(_ line: String) -> String {
         if line.hasPrefix("# ") {
-            return "\u{1B}[1;33m\(line)\u{1B}[0m"
+            return "\(Theme.bold)\(Theme.yellow)\(line)\(Theme.reset)"
         } else if line.hasPrefix("## ") {
-            return "\u{1B}[1;33m\(line)\u{1B}[0m"
+            return "\(Theme.bold)\(Theme.yellow)\(line)\(Theme.reset)"
         } else if line.hasPrefix("### ") {
-            return "\u{1B}[33m\(line)\u{1B}[0m"
+            return "\(Theme.yellow)\(line)\(Theme.reset)"
         } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
-            return "\u{1B}[36m•\u{1B}[0m " + String(line.dropFirst(2))
+            return "\(Theme.cyan)•\(Theme.reset) " + String(line.dropFirst(2))
         } else if line.hasPrefix("```") {
-            return "\u{1B}[32m\(line)\u{1B}[0m"
+            return "\(Theme.green)\(line)\(Theme.reset)"
         } else {
             var result = line
-            result = highlightPattern(result, pattern: "\\*\\*(.+?)\\*\\*", prefix: "\u{1B}[1m", suffix: "\u{1B}[0m")
-            result = highlightPattern(result, pattern: "\\*(.+?)\\*", prefix: "\u{1B}[3m", suffix: "\u{1B}[0m")
-            result = highlightPattern(result, pattern: "`(.+?)`", prefix: "\u{1B}[32m", suffix: "\u{1B}[0m")
+            result = highlightPattern(result, pattern: "\\*\\*(.+?)\\*\\*", prefix: Theme.bold, suffix: Theme.reset)
+            result = highlightPattern(result, pattern: "\\*(.+?)\\*", prefix: Theme.italic, suffix: Theme.reset)
+            result = highlightPattern(result, pattern: "`(.+?)`", prefix: Theme.green, suffix: Theme.reset)
             return result
         }
     }
@@ -225,14 +325,47 @@ class EditorApp {
     
     private func renderStatusBar(width: Int) -> String {
         let doc = state.document
-        let left = state.viewMode == .rendered ? "[PREVIEW]" : ""
+        
+        var leftParts: [String] = []
+        if state.viewMode == .rendered {
+            leftParts.append("[PREVIEW]")
+        }
+        if state.showSavedIndicator {
+            leftParts.append("Saved")
+        } else if state.isDirty {
+            leftParts.append("[+]")
+        }
+        let left = leftParts.joined(separator: " ")
+        
         let right = "\(doc.wordCount) words | Ln \(doc.cursorLine + 1), Col \(doc.cursorColumn + 1)"
         let padding = width - left.count - right.count
         let spaces = String(repeating: " ", count: max(0, padding))
-        return "\u{1B}[7m\(left)\(spaces)\(right)\u{1B}[0m"
+        return "\(Theme.bgStatusBar)\(Theme.black)\(left)\(spaces)\(right)\(Theme.reset)"
+    }
+    
+    private func renderHelpBar(width: Int) -> String {
+        let shortcuts: [(key: String, desc: String)] = [
+            ("^H", "help"),
+            ("^Q", "quit"),
+            ("^S", "save"),
+            ("^R", "preview"),
+            ("^V", "paste"),
+            ("c", "copy"),
+            ("x", "cut"),
+            ("d", "delete")
+        ]
+        
+        var parts: [String] = []
+        for shortcut in shortcuts {
+            parts.append("\(Theme.orange)\(shortcut.key) \(Theme.darkGray)\(shortcut.desc)\(Theme.reset)")
+        }
+        
+        let content = parts.joined(separator: "  ")
+        return content
     }
     
     private func quit() {
+        showCursor()
         resetInputMode()
         clearScreen()
         exit(0)
@@ -241,16 +374,21 @@ class EditorApp {
 
 enum ArrowKey {
     case up, down, left, right
+    case shiftUp, shiftDown, shiftLeft, shiftRight
 }
 
 class ArrowKeyParser {
     var arrowKey: ArrowKey?
     private var state: State = .initial
+    private var buffer: [Character] = []
     
     private enum State {
         case initial
         case escape
         case bracket
+        case modifier
+        case semicolon
+        case modifierValue
     }
     
     func parse(character: Character) -> Bool {
@@ -258,9 +396,11 @@ class ArrowKeyParser {
         case .initial:
             if character == "\u{1B}" {
                 state = .escape
+                buffer = []
                 return true
             }
             return false
+            
         case .escape:
             if character == "[" {
                 state = .bracket
@@ -268,19 +408,46 @@ class ArrowKeyParser {
             }
             state = .initial
             return false
+            
         case .bracket:
+            if character == "1" {
+                state = .modifier
+                return true
+            }
             state = .initial
             switch character {
-            case "A":
-                arrowKey = .up
-            case "B":
-                arrowKey = .down
-            case "C":
-                arrowKey = .right
-            case "D":
-                arrowKey = .left
-            default:
-                break
+            case "A": arrowKey = .up
+            case "B": arrowKey = .down
+            case "C": arrowKey = .right
+            case "D": arrowKey = .left
+            default: break
+            }
+            return true
+            
+        case .modifier:
+            if character == ";" {
+                state = .semicolon
+                return true
+            }
+            state = .initial
+            return true
+            
+        case .semicolon:
+            if character == "2" {
+                state = .modifierValue
+                return true
+            }
+            state = .initial
+            return true
+            
+        case .modifierValue:
+            state = .initial
+            switch character {
+            case "A": arrowKey = .shiftUp
+            case "B": arrowKey = .shiftDown
+            case "C": arrowKey = .shiftRight
+            case "D": arrowKey = .shiftLeft
+            default: break
             }
             return true
         }
