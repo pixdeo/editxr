@@ -91,43 +91,35 @@ class EditorApp {
                 state.toggleHelp()
                 render()
             case Key.ctrlV:
-                if state.viewMode == .plain {
-                    state.paste()
-                    render()
-                }
+                state.paste()
+                render()
             case Key.enter:
-                if state.viewMode == .plain {
-                    state.handleNewline()
-                    render()
-                }
+                state.handleNewline()
+                render()
             case Key.backspace:
-                if state.viewMode == .plain {
-                    state.handleBackspace()
-                    render()
-                }
+                state.handleBackspace()
+                render()
             default:
-                if state.viewMode == .plain {
-                    if state.document.hasSelection {
-                        switch char {
-                        case "c":
-                            state.copy()
-                            render()
-                        case "x":
-                            state.cut()
-                            render()
-                        case "d":
-                            state.deleteSelection()
-                            render()
-                        default:
-                            if char.isLetter || char.isNumber || char.isWhitespace || char.isPunctuation || char.isSymbol {
-                                state.handleCharacter(char)
-                                render()
-                            }
-                        }
-                    } else if char.isLetter || char.isNumber || char.isWhitespace || char.isPunctuation || char.isSymbol {
-                        state.handleCharacter(char)
+                if state.document.hasSelection {
+                    switch char {
+                    case "c":
+                        state.copy()
                         render()
+                    case "x":
+                        state.cut()
+                        render()
+                    case "d":
+                        state.deleteSelection()
+                        render()
+                    default:
+                        if char.isLetter || char.isNumber || char.isWhitespace || char.isPunctuation || char.isSymbol {
+                            state.handleCharacter(char)
+                            render()
+                        }
                     }
+                } else if char.isLetter || char.isNumber || char.isWhitespace || char.isPunctuation || char.isSymbol {
+                    state.handleCharacter(char)
+                    render()
                 }
             }
         }
@@ -182,10 +174,10 @@ class EditorApp {
         let contentHeight = height - reservedLines
         
         switch state.viewMode {
-        case .plain:
-            lines = renderPlainMode(width: width, height: contentHeight)
-        case .rendered:
-            lines = renderMarkdownMode(width: width, height: contentHeight)
+        case .normal:
+            lines = renderNormalMode(width: width, height: contentHeight)
+        case .raw:
+            lines = renderRawMode(width: width, height: contentHeight)
         }
         
         while lines.count < contentHeight {
@@ -203,7 +195,7 @@ class EditorApp {
         return lines.joined(separator: "\n")
     }
     
-    private func renderPlainMode(width: Int, height: Int) -> [String] {
+    private func renderNormalMode(width: Int, height: Int) -> [String] {
         var output: [String] = []
         let doc = state.document
         
@@ -214,21 +206,121 @@ class EditorApp {
         
         for i in startLine..<endLine {
             let line = doc.lines[i]
-            var renderedLine = renderLineWithSelection(line: line, lineIndex: i, selection: selection, doc: doc)
+            let spans = MarkdownLineParser.parse(line)
+            let isCursorLine = i == doc.cursorLine
+            let cursorInSpan = isCursorLine ? MarkdownLineParser.spanContainingCursor(column: doc.cursorColumn, spans: spans) : nil
             
-            if i == doc.cursorLine && !doc.hasSelection {
-                let col = min(doc.cursorColumn, line.count)
-                let before = String(line.prefix(col))
-                let charAtCursor = col < line.count ? String(line[line.index(line.startIndex, offsetBy: col)]) : " "
-                let cursor = "\(Theme.cursorUnderline)\(charAtCursor)\(Theme.reset)"
-                let after = col < line.count ? String(line.dropFirst(col + 1)) : ""
-                renderedLine = before + cursor + after
+            var renderedLine: String
+            
+            if selection != nil {
+                renderedLine = renderLineWithSelection(line: line, lineIndex: i, selection: selection, doc: doc)
+            } else if cursorInSpan != nil {
+                renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
+            } else {
+                renderedLine = renderLineCollapsed(line: line, spans: spans, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn)
             }
             
             output.append(renderedLine)
         }
         
         return output
+    }
+    
+    private func renderRawMode(width: Int, height: Int) -> [String] {
+        var output: [String] = []
+        let doc = state.document
+        
+        let startLine = max(0, doc.cursorLine - height / 2)
+        let endLine = min(doc.lines.count, startLine + height)
+        
+        let selection = doc.selectionRange
+        
+        for i in startLine..<endLine {
+            let line = doc.lines[i]
+            let isCursorLine = i == doc.cursorLine
+            
+            var renderedLine: String
+            
+            if selection != nil {
+                renderedLine = renderLineWithSelection(line: line, lineIndex: i, selection: selection, doc: doc)
+            } else if isCursorLine {
+                renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
+            } else {
+                renderedLine = line
+            }
+            
+            output.append(renderedLine)
+        }
+        
+        return output
+    }
+    
+    private func renderLineRaw(line: String, cursorColumn: Int) -> String {
+        let col = min(cursorColumn, line.count)
+        let before = String(line.prefix(col))
+        let charAtCursor = col < line.count ? String(line[line.index(line.startIndex, offsetBy: col)]) : " "
+        let cursor = "\(Theme.inverse)\(charAtCursor)\(Theme.reset)"
+        let after = col < line.count ? String(line.dropFirst(col + 1)) : ""
+        return before + cursor + after
+    }
+    
+    private func renderLineCollapsed(line: String, spans: [MarkdownSpan], isCursorLine: Bool, cursorColumn: Int) -> String {
+        if spans.isEmpty {
+            if isCursorLine {
+                return renderLineRaw(line: line, cursorColumn: cursorColumn)
+            }
+            return line
+        }
+        
+        var result = ""
+        var lastEnd = 0
+        let chars = Array(line)
+        
+        let visualCursorCol = isCursorLine ? MarkdownLineParser.rawToVisual(column: cursorColumn, spans: spans) : -1
+        var visualPos = 0
+        
+        for span in spans.sorted(by: { $0.rawStart < $1.rawStart }) {
+            if span.rawStart > lastEnd {
+                let plainText = String(chars[lastEnd..<span.rawStart])
+                result += renderWithCursor(text: plainText, style: "", visualPos: &visualPos, cursorCol: visualCursorCol)
+            }
+            
+            let style: String
+            switch span.kind {
+            case .bold: style = Theme.bold
+            case .italic: style = Theme.italic
+            case .code: style = Theme.string
+            }
+            
+            result += renderWithCursor(text: span.content, style: style, visualPos: &visualPos, cursorCol: visualCursorCol)
+            lastEnd = span.rawEnd
+        }
+        
+        if lastEnd < chars.count {
+            let remaining = String(chars[lastEnd...])
+            result += renderWithCursor(text: remaining, style: "", visualPos: &visualPos, cursorCol: visualCursorCol)
+        }
+        
+        if isCursorLine && visualCursorCol >= visualPos {
+            result += "\(Theme.inverse) \(Theme.reset)"
+        }
+        
+        return result
+    }
+    
+    private func renderWithCursor(text: String, style: String, visualPos: inout Int, cursorCol: Int) -> String {
+        var result = ""
+        for char in text {
+            if visualPos == cursorCol {
+                result += "\(Theme.inverse)\(char)\(Theme.reset)"
+            } else if !style.isEmpty {
+                result += "\(style)\(char)\(Theme.reset)"
+            } else {
+                result += String(char)
+            }
+            visualPos += 1
+        }
+        return result
     }
     
     private func renderLineWithSelection(line: String, lineIndex: Int, selection: (start: CursorPosition, end: CursorPosition)?, doc: Document) -> String {
@@ -275,61 +367,12 @@ class EditorApp {
         return line
     }
     
-    private func renderMarkdownMode(width: Int, height: Int) -> [String] {
-        var output: [String] = []
-        let content = state.document.content
-        let lines = content.components(separatedBy: "\n")
-        
-        for line in lines.prefix(height) {
-            output.append(renderMarkdownLine(line))
-        }
-        
-        return output
-    }
-    
-    private func renderMarkdownLine(_ line: String) -> String {
-        if line.hasPrefix("# ") {
-            return "\(Theme.bold)\(Theme.keyword)\(line)\(Theme.reset)"
-        } else if line.hasPrefix("## ") {
-            return "\(Theme.bold)\(Theme.keyword)\(line)\(Theme.reset)"
-        } else if line.hasPrefix("### ") {
-            return "\(Theme.keyword)\(line)\(Theme.reset)"
-        } else if line.hasPrefix("- ") || line.hasPrefix("* ") {
-            return "\(Theme.accent)•\(Theme.reset) " + String(line.dropFirst(2))
-        } else if line.hasPrefix("```") {
-            return "\(Theme.comment)\(line)\(Theme.reset)"
-        } else {
-            var result = line
-            result = highlightPattern(result, pattern: "\\*\\*(.+?)\\*\\*", prefix: Theme.bold, suffix: Theme.reset)
-            result = highlightPattern(result, pattern: "\\*(.+?)\\*", prefix: Theme.italic, suffix: Theme.reset)
-            result = highlightPattern(result, pattern: "`(.+?)`", prefix: Theme.string, suffix: Theme.reset)
-            return result
-        }
-    }
-    
-    private func highlightPattern(_ text: String, pattern: String, prefix: String, suffix: String) -> String {
-        guard let regex = try? NSRegularExpression(pattern: pattern) else { return text }
-        let range = NSRange(text.startIndex..., in: text)
-        var result = text
-        
-        let matches = regex.matches(in: text, range: range).reversed()
-        for match in matches {
-            if let fullRange = Range(match.range, in: result),
-               let captureRange = Range(match.range(at: 1), in: result) {
-                let captured = String(result[captureRange])
-                result.replaceSubrange(fullRange, with: prefix + captured + suffix)
-            }
-        }
-        
-        return result
-    }
-    
     private func renderStatusBar(width: Int) -> String {
         let doc = state.document
         
         var leftParts: [String] = []
-        if state.viewMode == .rendered {
-            leftParts.append("[PREVIEW]")
+        if state.viewMode == .raw {
+            leftParts.append("[RAW]")
         }
         if state.showSavedIndicator {
             leftParts.append("Saved")
@@ -349,7 +392,7 @@ class EditorApp {
             ("^H", "help"),
             ("^Q", "quit"),
             ("^S", "save"),
-            ("^R", "preview"),
+            ("^R", "raw"),
             ("^V", "paste"),
             ("c", "copy"),
             ("x", "cut"),

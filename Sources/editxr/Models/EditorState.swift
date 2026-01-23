@@ -1,14 +1,14 @@
 import Foundation
 
 enum ViewMode {
-    case plain
-    case rendered
+    case normal
+    case raw
 }
 
 class EditorState: ObservableObject {
     let filePath: String
     @Published var document: Document
-    @Published var viewMode: ViewMode = .plain
+    @Published var viewMode: ViewMode = .normal
     @Published var showStatusBar: Bool = true
     @Published var showHelp: Bool = true
     @Published var isDirty: Bool = false
@@ -57,7 +57,7 @@ class EditorState: ObservableObject {
     }
     
     func toggleViewMode() {
-        viewMode = viewMode == .plain ? .rendered : .plain
+        viewMode = viewMode == .normal ? .raw : .normal
     }
     
     func toggleStatusBar() {
@@ -142,11 +142,49 @@ class EditorState: ObservableObject {
     
     func moveLeft(selecting: Bool = false) {
         if selecting { document.startSelection() } else { document.clearSelection() }
+        
+        let line = document.currentLineText
+        let spans = MarkdownLineParser.parse(line)
+        let cursorInSpan = MarkdownLineParser.spanContainingCursor(column: document.cursorColumn, spans: spans)
+        
+        if let span = cursorInSpan {
+            if document.cursorColumn == span.contentStart {
+                document.cursorColumn = span.rawStart
+                return
+            }
+        } else {
+            for span in spans {
+                if document.cursorColumn == span.rawEnd {
+                    document.cursorColumn = span.contentEnd
+                    return
+                }
+            }
+        }
+        
         document.moveLeft()
     }
     
     func moveRight(selecting: Bool = false) {
         if selecting { document.startSelection() } else { document.clearSelection() }
+        
+        let line = document.currentLineText
+        let spans = MarkdownLineParser.parse(line)
+        let cursorInSpan = MarkdownLineParser.spanContainingCursor(column: document.cursorColumn, spans: spans)
+        
+        if let span = cursorInSpan {
+            if document.cursorColumn == span.contentEnd - 1 {
+                document.cursorColumn = span.rawEnd
+                return
+            }
+        } else {
+            for span in spans {
+                if document.cursorColumn == span.rawStart {
+                    document.cursorColumn = span.contentStart
+                    return
+                }
+            }
+        }
+        
         document.moveRight()
     }
 }
