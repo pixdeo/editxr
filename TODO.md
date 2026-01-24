@@ -1,6 +1,6 @@
 # TODO
 
-- [ ] Undo/redo
+- [x] Undo/redo
+- [x] Line numbers in gutter
 - [ ] Find/replace (ctrl+f)
-- [ ] Line numbers in gutter
 - [ ] Word wrap

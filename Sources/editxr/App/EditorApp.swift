@@ -135,6 +135,9 @@ class EditorApp {
     }
     
     private func handleArrowKey(_ key: ArrowKey) {
+        let size = getTerminalSize()
+        let viewportHeight = size.height - 2
+        
         switch key {
         case .up:
             state.moveUp(selecting: false)
@@ -152,6 +155,10 @@ class EditorApp {
             state.moveLeft(selecting: true)
         case .shiftRight:
             state.moveRight(selecting: true)
+        case .pageUp:
+            state.pageUp(viewportHeight: viewportHeight)
+        case .pageDown:
+            state.pageDown(viewportHeight: viewportHeight)
         }
         render()
     }
@@ -201,6 +208,8 @@ class EditorApp {
         let gutter = gutterWidth()
         let contentWidth = width - gutter
         
+        state.adjustScroll(viewportHeight: contentHeight)
+        
         switch state.viewMode {
         case .normal:
             lines = renderNormalMode(width: contentWidth, height: contentHeight, gutterWidth: gutter)
@@ -227,39 +236,73 @@ class EditorApp {
         var output: [String] = []
         let doc = state.document
         
-        let startLine = max(0, doc.cursorLine - height / 2)
+        let startLine = state.scrollOffset
         let endLine = min(doc.lines.count, startLine + height)
         
         let selection = doc.selectionRange
         
+        var inCodeBlock = isInsideCodeBlock(beforeLine: startLine, doc: doc)
+        
         for i in startLine..<endLine {
             let line = doc.lines[i]
-            let spans = MarkdownLineParser.parse(line)
-            let isCursorLine = i == doc.cursorLine
-            let cursorInSpan = isCursorLine ? MarkdownLineParser.spanContainingCursor(column: doc.cursorColumn, spans: spans) : nil
+            let isCodeDelimiter = MarkdownLineParser.isCodeBlockDelimiter(line)
             
+            if isCodeDelimiter {
+                inCodeBlock = !inCodeBlock
+            }
+            
+            let isCursorLine = i == doc.cursorLine
             var renderedLine: String
             
             if selection != nil {
                 renderedLine = renderLineWithSelection(line: line, lineIndex: i, selection: selection, doc: doc)
-            } else if cursorInSpan != nil {
-                renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
+            } else if inCodeBlock || isCodeDelimiter {
+                renderedLine = renderCodeBlockLine(line: line, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn)
             } else {
-                renderedLine = renderLineCollapsed(line: line, spans: spans, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn)
+                let spans = MarkdownLineParser.parse(line)
+                let cursorInSpan = isCursorLine ? MarkdownLineParser.spanContainingCursor(column: doc.cursorColumn, spans: spans) : nil
+                
+                if cursorInSpan != nil {
+                    renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
+                } else {
+                    renderedLine = renderLineCollapsed(line: line, spans: spans, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn)
+                }
             }
             
             let gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
-            output.append(gutter + renderedLine)
+            let truncated = truncateToWidth(renderedLine, width: width)
+            output.append(gutter + truncated)
         }
         
         return output
+    }
+    
+    private func isInsideCodeBlock(beforeLine: Int, doc: Document) -> Bool {
+        var inside = false
+        for i in 0..<beforeLine {
+            if MarkdownLineParser.isCodeBlockDelimiter(doc.lines[i]) {
+                inside = !inside
+            }
+        }
+        return inside
+    }
+    
+    private func renderCodeBlockLine(line: String, isCursorLine: Bool, cursorColumn: Int) -> String {
+        if isCursorLine {
+            let col = min(cursorColumn, line.count)
+            let before = String(line.prefix(col))
+            let charAtCursor = col < line.count ? String(line[line.index(line.startIndex, offsetBy: col)]) : " "
+            let after = col < line.count ? String(line.dropFirst(col + 1)) : ""
+            return "\(Theme.codeBlock)\(before)\(Theme.inverse)\(charAtCursor)\(Theme.reset)\(Theme.codeBlock)\(after)\(Theme.reset)"
+        }
+        return "\(Theme.codeBlock)\(line)\(Theme.reset)"
     }
     
     private func renderRawMode(width: Int, height: Int, gutterWidth: Int) -> [String] {
         var output: [String] = []
         let doc = state.document
         
-        let startLine = max(0, doc.cursorLine - height / 2)
+        let startLine = state.scrollOffset
         let endLine = min(doc.lines.count, startLine + height)
         
         let selection = doc.selectionRange
@@ -279,7 +322,8 @@ class EditorApp {
             }
             
             let gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
-            output.append(gutter + renderedLine)
+            let truncated = truncateToWidth(renderedLine, width: width)
+            output.append(gutter + truncated)
         }
         
         return output
@@ -320,6 +364,9 @@ class EditorApp {
             case .bold: style = Theme.bold
             case .italic: style = Theme.italic
             case .code: style = Theme.string
+            case .heading1: style = Theme.heading1
+            case .heading2: style = Theme.heading2
+            case .heading3: style = Theme.heading3
             }
             
             result += renderWithCursor(text: span.content, style: style, visualPos: &visualPos, cursorCol: visualCursorCol)
@@ -397,6 +444,36 @@ class EditorApp {
         return line
     }
     
+    /// Truncate a string with ANSI codes to a visible width
+    private func truncateToWidth(_ str: String, width: Int) -> String {
+        var result = ""
+        var visibleCount = 0
+        var inEscape = false
+        
+        for char in str {
+            if char == "\u{1B}" {
+                inEscape = true
+                result.append(char)
+            } else if inEscape {
+                result.append(char)
+                if char.isLetter {
+                    inEscape = false
+                }
+            } else {
+                if visibleCount < width {
+                    result.append(char)
+                    visibleCount += 1
+                } else {
+                    // End any active styling and stop
+                    result.append(Theme.reset)
+                    break
+                }
+            }
+        }
+        
+        return result
+    }
+    
     private func renderStatusBar(width: Int) -> String {
         let doc = state.document
         
@@ -448,6 +525,7 @@ class EditorApp {
 enum ArrowKey {
     case up, down, left, right
     case shiftUp, shiftDown, shiftLeft, shiftRight
+    case pageUp, pageDown
 }
 
 class ArrowKeyParser {
@@ -462,6 +540,7 @@ class ArrowKeyParser {
         case modifier
         case semicolon
         case modifierValue
+        case pageKey
     }
     
     func parse(character: Character) -> Bool {
@@ -487,6 +566,11 @@ class ArrowKeyParser {
                 state = .modifier
                 return true
             }
+            if character == "5" || character == "6" {
+                buffer = [character]
+                state = .pageKey
+                return true
+            }
             state = .initial
             switch character {
             case "A": arrowKey = .up
@@ -494,6 +578,17 @@ class ArrowKeyParser {
             case "C": arrowKey = .right
             case "D": arrowKey = .left
             default: break
+            }
+            return true
+            
+        case .pageKey:
+            state = .initial
+            if character == "~" && !buffer.isEmpty {
+                if buffer[0] == "5" {
+                    arrowKey = .pageUp
+                } else if buffer[0] == "6" {
+                    arrowKey = .pageDown
+                }
             }
             return true
             

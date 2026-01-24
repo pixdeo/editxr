@@ -10,14 +10,14 @@ enum Theme {
     static let textSecondary = "\u{1B}[38;2;102;102;102m"
     static let textMuted = "\u{1B}[38;2;138;138;138m"
     static let accent = "\u{1B}[38;2;71;209;211m"
-    
+
     // Status bar
-    static let statusBarBg = "\u{1B}[48;2;255;255;255m"
+    static let statusBarBg = "\u{1B}[48;2;20;20;20m"
     static let statusBarText = "\u{1B}[38;2;138;138;138m"
     static let statusBarTextActive = "\u{1B}[38;2;26;26;26m"
     static let statusBarBorder = "\u{1B}[38;2;243;243;243m"
     static let statusBarAccent = "\u{1B}[38;2;71;209;211m"
-    
+
     // Editor
     static let selectionBg = "\u{1B}[48;2;227;248;248m"
     static let selectionFg = "\u{1B}[38;2;26;26;26m"
@@ -26,7 +26,7 @@ enum Theme {
     static let gutter = "\u{1B}[38;2;138;138;138m"
     static let gutterBg = "\u{1B}[48;2;255;255;255m"
     static let gutterDivider = "\u{1B}[38;2;243;243;243m"
-    
+
     // Syntax
     static let keyword = "\u{1B}[38;2;71;209;211m"
     static let comment = "\u{1B}[38;2;138;138;138m"
@@ -34,6 +34,13 @@ enum Theme {
     static let identifier = "\u{1B}[38;2;26;26;26m"
     static let punctuation = "\u{1B}[38;2;102;102;102m"
     
+    // Markdown
+    static let heading1 = "\u{1B}[1m\u{1B}[38;2;71;209;211m"
+    static let heading2 = "\u{1B}[1m\u{1B}[38;2;26;26;26m"
+    static let heading3 = "\u{1B}[1m\u{1B}[38;2;102;102;102m"
+    static let codeBlock = "\u{1B}[38;2;138;138;138m"
+    static let codeBlockBg = "\u{1B}[48;2;245;245;245m"
+
     // Formatting
     static let reset = "\u{1B}[0m"
     static let bold = "\u{1B}[1m"

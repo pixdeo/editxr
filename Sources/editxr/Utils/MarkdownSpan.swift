@@ -1,9 +1,12 @@
 import Foundation
 
 enum SpanKind {
-    case bold       // **text**
-    case italic     // *text*
-    case code       // `text`
+    case bold
+    case italic
+    case code
+    case heading1
+    case heading2
+    case heading3
 }
 
 struct MarkdownSpan {
@@ -18,23 +21,28 @@ struct MarkdownSpan {
     var contentRange: Range<Int> { contentStart..<contentEnd }
     var markerLength: Int {
         switch kind {
-        case .bold: return 2    // **
-        case .italic: return 1  // *
-        case .code: return 1    // `
+        case .bold: return 2
+        case .italic: return 1
+        case .code: return 1
+        case .heading1: return 2
+        case .heading2: return 3
+        case .heading3: return 4
         }
     }
 }
 
 struct MarkdownLineParser {
     
-    /// Parse a line and return all markdown spans found
     static func parse(_ line: String) -> [MarkdownSpan] {
+        if let headingSpan = parseHeading(line) {
+            return [headingSpan]
+        }
+        
         var spans: [MarkdownSpan] = []
         let chars = Array(line)
         var i = 0
         
         while i < chars.count {
-            // Check for bold (**text**)
             if i + 1 < chars.count && chars[i] == "*" && chars[i + 1] == "*" {
                 if let span = parseBold(chars: chars, startIndex: i) {
                     spans.append(span)
@@ -43,7 +51,6 @@ struct MarkdownLineParser {
                 }
             }
             
-            // Check for italic (*text*) - but not bold
             if chars[i] == "*" && (i + 1 >= chars.count || chars[i + 1] != "*") {
                 if let span = parseItalic(chars: chars, startIndex: i) {
                     spans.append(span)
@@ -52,7 +59,6 @@ struct MarkdownLineParser {
                 }
             }
             
-            // Check for code (`text`)
             if chars[i] == "`" {
                 if let span = parseCode(chars: chars, startIndex: i) {
                     spans.append(span)
@@ -67,7 +73,35 @@ struct MarkdownLineParser {
         return spans
     }
     
-    /// Parse bold: **text**
+    static func isCodeBlockDelimiter(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        return trimmed.hasPrefix("```")
+    }
+    
+    private static func parseHeading(_ line: String) -> MarkdownSpan? {
+        let chars = Array(line)
+        guard !chars.isEmpty && chars[0] == "#" else { return nil }
+        
+        var level = 0
+        while level < chars.count && level < 3 && chars[level] == "#" {
+            level += 1
+        }
+        
+        guard level < chars.count && chars[level] == " " else { return nil }
+        
+        let markerLength = level + 1
+        let content = String(chars[markerLength...])
+        let kind: SpanKind = level == 1 ? .heading1 : (level == 2 ? .heading2 : .heading3)
+        
+        return MarkdownSpan(
+            kind: kind,
+            rawStart: 0,
+            rawEnd: chars.count,
+            contentStart: markerLength,
+            contentEnd: chars.count,
+            content: content
+        )
+    }
     private static func parseBold(chars: [Character], startIndex: Int) -> MarkdownSpan? {
         guard startIndex + 2 < chars.count else { return nil }
         

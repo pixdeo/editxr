@@ -20,6 +20,7 @@ class EditorState: ObservableObject {
     @Published var showLineNumbers: Bool = false
     @Published var isDirty: Bool = false
     @Published var showSavedIndicator: Bool = false
+    @Published var scrollOffset: Int = 0
     
     private var clipboard: String = ""
     private var savedTimer: DispatchWorkItem?
@@ -27,6 +28,7 @@ class EditorState: ObservableObject {
     private var undoStack: [DocumentSnapshot] = []
     private var redoStack: [DocumentSnapshot] = []
     private let maxUndoLevels = 100
+    private let scrollMargin = 4
     
     var onSavedIndicatorChanged: (() -> Void)?
     
@@ -257,5 +259,37 @@ class EditorState: ObservableObject {
         }
         
         document.moveRight()
+    }
+    
+    func adjustScroll(viewportHeight: Int) {
+        let cursorLine = document.cursorLine
+        
+        if cursorLine < scrollOffset + scrollMargin {
+            scrollOffset = max(0, cursorLine - scrollMargin)
+        }
+        
+        let bottomEdge = scrollOffset + viewportHeight - 1
+        if cursorLine > bottomEdge - scrollMargin {
+            scrollOffset = cursorLine - viewportHeight + scrollMargin + 1
+        }
+        
+        let maxScroll = max(0, document.lines.count - viewportHeight)
+        scrollOffset = min(scrollOffset, maxScroll)
+    }
+    
+    func pageUp(viewportHeight: Int) {
+        let pageSize = viewportHeight - scrollMargin
+        document.cursorLine = max(0, document.cursorLine - pageSize)
+        document.cursorColumn = min(document.cursorColumn, document.currentLineText.count)
+        document.clearSelection()
+        scrollOffset = max(0, scrollOffset - pageSize)
+    }
+    
+    func pageDown(viewportHeight: Int) {
+        let pageSize = viewportHeight - scrollMargin
+        document.cursorLine = min(document.lines.count - 1, document.cursorLine + pageSize)
+        document.cursorColumn = min(document.cursorColumn, document.currentLineText.count)
+        document.clearSelection()
+        scrollOffset = min(max(0, document.lines.count - viewportHeight), scrollOffset + pageSize)
     }
 }
