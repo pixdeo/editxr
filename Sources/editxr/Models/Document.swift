@@ -80,6 +80,36 @@ struct Document {
         selectionAnchor = nil
     }
     
+    mutating func replaceRange(_ range: (start: CursorPosition, end: CursorPosition), with text: String) {
+        if range.start.line == range.end.line {
+            var line = lines[range.start.line]
+            let startIdx = line.index(line.startIndex, offsetBy: min(range.start.column, line.count))
+            let endIdx = line.index(line.startIndex, offsetBy: min(range.end.column, line.count))
+            line.replaceSubrange(startIdx..<endIdx, with: text)
+            lines[range.start.line] = line
+        } else {
+            let firstLine = lines[range.start.line]
+            let lastLine = lines[range.end.line]
+            let startIdx = firstLine.index(firstLine.startIndex, offsetBy: min(range.start.column, firstLine.count))
+            let endIdx = lastLine.index(lastLine.startIndex, offsetBy: min(range.end.column, lastLine.count))
+            
+            let newContent = String(firstLine[..<startIdx]) + text + String(lastLine[endIdx...])
+            let newLines = newContent.components(separatedBy: "\n")
+            
+            lines.replaceSubrange(range.start.line...range.end.line, with: newLines)
+        }
+        
+        let newLines = text.components(separatedBy: "\n")
+        if newLines.count == 1 {
+            cursorLine = range.start.line
+            cursorColumn = range.start.column + text.count
+        } else {
+            cursorLine = range.start.line + newLines.count - 1
+            cursorColumn = newLines.last?.count ?? 0
+        }
+        clearSelection()
+    }
+    
     mutating func deleteSelection() {
         guard let range = selectionRange else { return }
         
@@ -118,6 +148,72 @@ struct Document {
     var currentLineText: String {
         guard cursorLine < lines.count else { return "" }
         return lines[cursorLine]
+    }
+    
+    var currentParagraph: String {
+        guard cursorLine < lines.count else { return "" }
+        
+        var startLine = cursorLine
+        while startLine > 0 && !lines[startLine - 1].trimmingCharacters(in: .whitespaces).isEmpty {
+            startLine -= 1
+        }
+        
+        var endLine = cursorLine
+        while endLine < lines.count - 1 && !lines[endLine].trimmingCharacters(in: .whitespaces).isEmpty {
+            endLine += 1
+        }
+        
+        if lines[endLine].trimmingCharacters(in: .whitespaces).isEmpty && endLine > startLine {
+            endLine -= 1
+        }
+        
+        return lines[startLine...endLine].joined(separator: "\n")
+    }
+    
+    var currentParagraphRange: (start: CursorPosition, end: CursorPosition)? {
+        guard cursorLine < lines.count else { return nil }
+        
+        var startLine = cursorLine
+        while startLine > 0 && !lines[startLine - 1].trimmingCharacters(in: .whitespaces).isEmpty {
+            startLine -= 1
+        }
+        
+        var endLine = cursorLine
+        while endLine < lines.count - 1 && !lines[endLine].trimmingCharacters(in: .whitespaces).isEmpty {
+            endLine += 1
+        }
+        
+        if lines[endLine].trimmingCharacters(in: .whitespaces).isEmpty && endLine > startLine {
+            endLine -= 1
+        }
+        
+        let endColumn = lines[endLine].count
+        return (CursorPosition(line: startLine, column: 0), CursorPosition(line: endLine, column: endColumn))
+    }
+    
+    func textInRange(_ range: (start: CursorPosition, end: CursorPosition)) -> String {
+        if range.start.line == range.end.line {
+            let line = lines[range.start.line]
+            let startIdx = line.index(line.startIndex, offsetBy: min(range.start.column, line.count))
+            let endIdx = line.index(line.startIndex, offsetBy: min(range.end.column, line.count))
+            return String(line[startIdx..<endIdx])
+        }
+        
+        var result: [String] = []
+        
+        let firstLine = lines[range.start.line]
+        let firstIdx = firstLine.index(firstLine.startIndex, offsetBy: min(range.start.column, firstLine.count))
+        result.append(String(firstLine[firstIdx...]))
+        
+        for i in (range.start.line + 1)..<range.end.line {
+            result.append(lines[i])
+        }
+        
+        let lastLine = lines[range.end.line]
+        let lastIdx = lastLine.index(lastLine.startIndex, offsetBy: min(range.end.column, lastLine.count))
+        result.append(String(lastLine[..<lastIdx]))
+        
+        return result.joined(separator: "\n")
     }
     
     mutating func insertCharacter(_ char: Character) {
@@ -191,5 +287,56 @@ struct Document {
             cursorLine += 1
             cursorColumn = 0
         }
+    }
+    
+    mutating func moveWordLeft() {
+        if cursorColumn == 0 && cursorLine > 0 {
+            cursorLine -= 1
+            cursorColumn = lines[cursorLine].count
+            return
+        }
+        
+        guard cursorLine < lines.count else { return }
+        let line = lines[cursorLine]
+        guard !line.isEmpty && cursorColumn > 0 else { return }
+        
+        let chars = Array(line)
+        var pos = min(cursorColumn - 1, chars.count - 1)
+        
+        while pos > 0 && !chars[pos].isLetter && !chars[pos].isNumber {
+            pos -= 1
+        }
+        
+        while pos > 0 && (chars[pos - 1].isLetter || chars[pos - 1].isNumber) {
+            pos -= 1
+        }
+        
+        cursorColumn = pos
+    }
+    
+    mutating func moveWordRight() {
+        guard cursorLine < lines.count else { return }
+        let line = lines[cursorLine]
+        
+        if cursorColumn >= line.count {
+            if cursorLine < lines.count - 1 {
+                cursorLine += 1
+                cursorColumn = 0
+            }
+            return
+        }
+        
+        let chars = Array(line)
+        var pos = cursorColumn
+        
+        while pos < chars.count && (chars[pos].isLetter || chars[pos].isNumber) {
+            pos += 1
+        }
+        
+        while pos < chars.count && !chars[pos].isLetter && !chars[pos].isNumber {
+            pos += 1
+        }
+        
+        cursorColumn = pos
     }
 }

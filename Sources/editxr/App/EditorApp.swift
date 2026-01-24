@@ -4,10 +4,17 @@ class EditorApp {
     private let state: EditorState
     private var stdInSource: DispatchSourceRead?
     private var arrowKeyParser = ArrowKeyParser()
+    private let llmService = LLMService()
+    private var llmModal: LLMModal?
     
     init(state: EditorState) {
         self.state = state
         state.onSavedIndicatorChanged = { [weak self] in
+            self?.render()
+        }
+        
+        llmModal = LLMModal(llmService: llmService)
+        llmModal?.onStateChanged = { [weak self] in
             self?.render()
         }
     }
@@ -24,11 +31,7 @@ class EditorApp {
         self.stdInSource = stdInSource
         
         signal(SIGINT, SIG_IGN)
-        let sigIntSource = DispatchSource.makeSignalSource(signal: SIGINT, queue: .main)
-        sigIntSource.setEventHandler { [weak self] in
-            self?.quit()
-        }
-        sigIntSource.resume()
+        signal(SIGTSTP, SIG_IGN)
         
         let sigWinChSource = DispatchSource.makeSignalSource(signal: SIGWINCH, queue: .main)
         sigWinChSource.setEventHandler { [weak self] in
@@ -53,10 +56,14 @@ class EditorApp {
     
     private func enterAlternateScreen() {
         print("\u{1B}[?1049h", terminator: "")
+        print("\u{1B}[?25l", terminator: "")
+        print("\u{1B}[?2004h", terminator: "")
         fflush(stdout)
     }
     
     private func exitAlternateScreen() {
+        print("\u{1B}[?2004l", terminator: "")
+        print("\u{1B}[?25h", terminator: "")
         print("\u{1B}[?1049l", terminator: "")
         fflush(stdout)
     }
@@ -64,8 +71,8 @@ class EditorApp {
     private func setInputMode() {
         var tattr = termios()
         tcgetattr(STDIN_FILENO, &tattr)
-        tattr.c_lflag &= ~tcflag_t(ECHO | ICANON)
-        tattr.c_iflag &= ~tcflag_t(IXON | IXOFF)
+        tattr.c_lflag &= ~tcflag_t(ECHO | ICANON | ISIG | IEXTEN)
+        tattr.c_iflag &= ~tcflag_t(IXON | IXOFF | ICRNL | INLCR | IGNCR)
         tcsetattr(STDIN_FILENO, TCSAFLUSH, &tattr)
     }
     
@@ -80,7 +87,14 @@ class EditorApp {
         let data = FileHandle.standardInput.availableData
         guard let string = String(data: data, encoding: .utf8) else { return }
         
+        var needsRender = false
+        
         for char in string {
+            if let modal = llmModal, modal.isVisible {
+                handleLLMModalInput(char)
+                continue
+            }
+            
             if arrowKeyParser.parse(character: char) {
                 if let key = arrowKeyParser.arrowKey {
                     arrowKeyParser.arrowKey = nil
@@ -90,62 +104,120 @@ class EditorApp {
             }
             
             switch char {
-            case Key.ctrlQ:
+            case Key.ctrlQ, Key.ctrlD:
                 quit()
             case Key.ctrlS:
                 state.save()
-                render()
+                needsRender = true
             case Key.ctrlR:
                 state.toggleViewMode()
-                render()
+                needsRender = true
             case Key.ctrlH:
                 state.toggleHelp()
-                render()
+                needsRender = true
             case Key.ctrlL:
                 state.toggleLineNumbers()
-                render()
+                needsRender = true
             case Key.ctrlV:
                 state.paste()
-                render()
+                needsRender = true
             case Key.ctrlU:
                 state.undo()
-                render()
+                needsRender = true
             case Key.ctrlG:
                 state.redo()
-                render()
+                needsRender = true
             case Key.ctrlW:
                 state.toggleWordWrap()
-                render()
+                needsRender = true
+            case Key.ctrlSpace:
+                showLLMModal()
             case Key.enter:
                 state.handleNewline()
-                render()
+                needsRender = true
             case Key.backspace:
                 state.handleBackspace()
-                render()
+                needsRender = true
             default:
                 if state.document.hasSelection {
                     switch char {
                     case "c":
                         state.copy()
-                        render()
+                        needsRender = true
                     case "x":
                         state.cut()
-                        render()
-                    case "d":
-                        state.deleteSelection()
-                        render()
+                        needsRender = true
                     default:
-                        if char.isLetter || char.isNumber || char.isWhitespace || char.isPunctuation || char.isSymbol {
+                        if isPrintable(char) {
                             state.handleCharacter(char)
-                            render()
+                            needsRender = true
                         }
                     }
-                } else if char.isLetter || char.isNumber || char.isWhitespace || char.isPunctuation || char.isSymbol {
+                } else if isPrintable(char) {
                     state.handleCharacter(char)
-                    render()
+                    needsRender = true
                 }
             }
         }
+        
+        if needsRender {
+            render()
+        }
+    }
+    
+    private func isPrintable(_ char: Character) -> Bool {
+        guard let scalar = char.unicodeScalars.first else { return false }
+        let value = scalar.value
+        if value < 32 { return false }
+        if value == 127 { return false }
+        return true
+    }
+    
+    private func handleLLMModalInput(_ char: Character) {
+        guard let modal = llmModal else { return }
+        
+        if char == Key.escape {
+            modal.handleEscape()
+            return
+        }
+        
+        if char == Key.enter {
+            modal.handleEnter()
+            return
+        }
+        
+        if char == Key.tab && modal.handleTab() {
+            if let result = modal.acceptResult() {
+                applyLLMResult(result)
+            }
+            return
+        }
+        
+        if char == Key.backspace {
+            modal.handleBackspace()
+            return
+        }
+        
+        modal.handleCharacter(char)
+    }
+    
+    private func showLLMModal() {
+        let context: String
+        if let selection = state.document.selectionRange {
+            context = state.document.textInRange(selection)
+        } else {
+            context = state.document.currentParagraph
+        }
+        llmModal?.show(withContext: context)
+    }
+    
+    private func applyLLMResult(_ result: String) {
+        if state.document.hasSelection {
+            state.replaceSelection(with: result)
+        } else {
+            state.replaceParagraph(with: result)
+        }
+        render()
     }
     
     private func handleArrowKey(_ key: ArrowKey) {
@@ -169,6 +241,14 @@ class EditorApp {
             state.moveLeft(selecting: true)
         case .shiftRight:
             state.moveRight(selecting: true)
+        case .ctrlLeft:
+            state.moveWordLeft(selecting: false)
+        case .ctrlRight:
+            state.moveWordRight(selecting: false)
+        case .ctrlShiftLeft:
+            state.moveWordLeft(selecting: true)
+        case .ctrlShiftRight:
+            state.moveWordRight(selecting: true)
         case .pageUp:
             state.pageUp(viewportHeight: viewportHeight)
         case .pageDown:
@@ -180,7 +260,7 @@ class EditorApp {
     private func render() {
         let size = getTerminalSize()
         let output = renderEditor(width: size.width, height: size.height)
-        print("\u{1B}[H\(output)\u{1B}[J", terminator: "")
+        print("\u{1B}[H\(output)\u{1B}[\(size.height);\(size.width)H", terminator: "")
         fflush(stdout)
     }
     
@@ -215,7 +295,12 @@ class EditorApp {
     
     private func renderEditor(width: Int, height: Int) -> String {
         var lines: [String] = []
-        let reservedLines = 2
+        var reservedLines = 2
+        
+        let modalLines = llmModal?.render(width: width) ?? []
+        if !modalLines.isEmpty {
+            reservedLines += modalLines.count
+        }
         
         let contentHeight = height - reservedLines
         let gutter = gutterWidth()
@@ -234,6 +319,10 @@ class EditorApp {
         while lines.count < contentHeight {
             let emptyGutter = renderGutter(lineNumber: 0, width: gutter).replacingOccurrences(of: String(0), with: " ")
             lines.append(padToWidth(emptyGutter, width: width))
+        }
+        
+        for modalLine in modalLines {
+            lines.append(padToWidth(modalLine, width: width))
         }
         
         lines.append(padToWidth(renderStatusBar(width: width), width: width))
@@ -454,8 +543,18 @@ class EditorApp {
             let globalPos = segmentStart + i
             let isCursor = i == cursorColumn
             
+            var isMarker = false
             var style = ""
+            
             for span in spans {
+                let inOpeningMarker = globalPos >= span.rawStart && globalPos < span.contentStart
+                let inClosingMarker = globalPos >= span.contentEnd && globalPos < span.rawEnd
+                
+                if inOpeningMarker || inClosingMarker {
+                    isMarker = true
+                    break
+                }
+                
                 if globalPos >= span.contentStart && globalPos < span.contentEnd {
                     switch span.kind {
                     case .bold: style = Theme.bold
@@ -467,6 +566,10 @@ class EditorApp {
                     }
                     break
                 }
+            }
+            
+            if isMarker {
+                continue
             }
             
             if isCursor {
@@ -927,6 +1030,8 @@ class EditorApp {
 enum ArrowKey {
     case up, down, left, right
     case shiftUp, shiftDown, shiftLeft, shiftRight
+    case ctrlLeft, ctrlRight
+    case ctrlShiftLeft, ctrlShiftRight
     case pageUp, pageDown
 }
 
@@ -1003,20 +1108,29 @@ class ArrowKeyParser {
             return true
             
         case .semicolon:
-            if character == "2" {
+            if character == "2" || character == "5" || character == "6" {
+                buffer = [character]
                 state = .modifierValue
                 return true
             }
             state = .initial
-            return true
+            return false
             
         case .modifierValue:
             state = .initial
-            switch character {
-            case "A": arrowKey = .shiftUp
-            case "B": arrowKey = .shiftDown
-            case "C": arrowKey = .shiftRight
-            case "D": arrowKey = .shiftLeft
+            let modifier = buffer.first ?? "0"
+            switch (modifier, character) {
+            // Shift+Arrow (modifier 2)
+            case ("2", "A"): arrowKey = .shiftUp
+            case ("2", "B"): arrowKey = .shiftDown
+            case ("2", "C"): arrowKey = .shiftRight
+            case ("2", "D"): arrowKey = .shiftLeft
+            // Ctrl+Arrow (modifier 5)
+            case ("5", "C"): arrowKey = .ctrlRight
+            case ("5", "D"): arrowKey = .ctrlLeft
+            // Ctrl+Shift+Arrow (modifier 6)
+            case ("6", "C"): arrowKey = .ctrlShiftRight
+            case ("6", "D"): arrowKey = .ctrlShiftLeft
             default: break
             }
             return true

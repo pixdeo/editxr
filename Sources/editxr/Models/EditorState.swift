@@ -38,6 +38,12 @@ class EditorState: ObservableObject {
     init(filePath: String) {
         self.filePath = filePath
         self.document = Document()
+        
+        let config = Config.load()
+        self.showHelp = config.showHelp
+        self.wordWrap = config.wordWrap
+        self.viewMode = config.renderMarkdown ? .normal : .raw
+        
         loadFile()
     }
     
@@ -124,6 +130,7 @@ class EditorState: ObservableObject {
     
     func toggleViewMode() {
         viewMode = viewMode == .normal ? .raw : .normal
+        saveConfig()
     }
     
     func toggleStatusBar() {
@@ -136,11 +143,21 @@ class EditorState: ObservableObject {
     
     func toggleHelp() {
         showHelp.toggle()
+        saveConfig()
     }
     
     func toggleWordWrap() {
         wordWrap.toggle()
         scrollX = 0
+        saveConfig()
+    }
+    
+    private func saveConfig() {
+        var config = Config.load()
+        config.showHelp = showHelp
+        config.wordWrap = wordWrap
+        config.renderMarkdown = viewMode == .normal
+        config.save()
     }
     
     func handleCharacter(_ char: Character) {
@@ -209,6 +226,37 @@ class EditorState: ObservableObject {
             }
         }
         isDirty = true
+    }
+    
+    func replaceSelection(with text: String) {
+        guard document.hasSelection else { return }
+        saveSnapshot()
+        document.deleteSelection()
+        insertText(text)
+        isDirty = true
+    }
+    
+    func replaceParagraph(with text: String) {
+        guard let range = document.currentParagraphRange else { return }
+        saveSnapshot()
+        document.replaceRange(range, with: text)
+        isDirty = true
+    }
+    
+    func insertAtCursor(_ text: String) {
+        saveSnapshot()
+        insertText(text)
+        isDirty = true
+    }
+    
+    private func insertText(_ text: String) {
+        for char in text {
+            if char == "\n" {
+                document.insertNewline()
+            } else {
+                document.insertCharacter(char)
+            }
+        }
     }
     
     private var lastViewportWidth: Int = 80
@@ -375,6 +423,16 @@ class EditorState: ObservableObject {
         }
         
         document.moveRight()
+    }
+    
+    func moveWordLeft(selecting: Bool = false) {
+        if selecting { document.startSelection() } else { document.clearSelection() }
+        document.moveWordLeft()
+    }
+    
+    func moveWordRight(selecting: Bool = false) {
+        if selecting { document.startSelection() } else { document.clearSelection() }
+        document.moveWordRight()
     }
     
     func adjustScroll(viewportHeight: Int, viewportWidth: Int) {
