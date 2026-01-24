@@ -14,6 +14,7 @@ class EditorApp {
     
     func start() {
         setInputMode()
+        enterAlternateScreen()
         
         let stdInSource = DispatchSource.makeReadSource(fileDescriptor: STDIN_FILENO, queue: .main)
         stdInSource.setEventHandler { [weak self] in
@@ -47,6 +48,16 @@ class EditorApp {
     
     private func showCursor() {
         print("\u{1B}[?25h", terminator: "")
+        fflush(stdout)
+    }
+    
+    private func enterAlternateScreen() {
+        print("\u{1B}[?1049h", terminator: "")
+        fflush(stdout)
+    }
+    
+    private func exitAlternateScreen() {
+        print("\u{1B}[?1049l", terminator: "")
         fflush(stdout)
     }
     
@@ -164,10 +175,9 @@ class EditorApp {
     }
     
     private func render() {
-        clearScreen()
         let size = getTerminalSize()
         let output = renderEditor(width: size.width, height: size.height)
-        print(output, terminator: "")
+        print("\u{1B}[H\(output)\u{1B}[J", terminator: "")
         fflush(stdout)
     }
     
@@ -208,7 +218,7 @@ class EditorApp {
         let gutter = gutterWidth()
         let contentWidth = width - gutter
         
-        state.adjustScroll(viewportHeight: contentHeight)
+        state.adjustScroll(viewportHeight: contentHeight, viewportWidth: contentWidth)
         
         switch state.viewMode {
         case .normal:
@@ -218,13 +228,14 @@ class EditorApp {
         }
         
         while lines.count < contentHeight {
-            lines.append(renderGutter(lineNumber: 0, width: gutter).replacingOccurrences(of: String(0), with: " "))
+            let emptyGutter = renderGutter(lineNumber: 0, width: gutter).replacingOccurrences(of: String(0), with: " ")
+            lines.append(padToWidth(emptyGutter, width: width))
         }
         
-        lines.append(renderStatusBar(width: width))
+        lines.append(padToWidth(renderStatusBar(width: width), width: width))
         
         if state.showHelp {
-            lines.append(renderHelpBar(width: width))
+            lines.append(padToWidth(renderHelpBar(width: width), width: width))
         } else {
             lines.append(String(repeating: " ", count: width))
         }
@@ -270,8 +281,8 @@ class EditorApp {
             }
             
             let gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
-            let truncated = truncateToWidth(renderedLine, width: width)
-            output.append(gutter + truncated)
+            let scrolled = applyHorizontalScroll(renderedLine, scrollX: state.scrollX, width: width)
+            output.append(padToWidth(gutter + scrolled, width: gutterWidth + width))
         }
         
         return output
@@ -322,8 +333,8 @@ class EditorApp {
             }
             
             let gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
-            let truncated = truncateToWidth(renderedLine, width: width)
-            output.append(gutter + truncated)
+            let scrolled = applyHorizontalScroll(renderedLine, scrollX: state.scrollX, width: width)
+            output.append(padToWidth(gutter + scrolled, width: gutterWidth + width))
         }
         
         return output
@@ -444,7 +455,60 @@ class EditorApp {
         return line
     }
     
-    /// Truncate a string with ANSI codes to a visible width
+    private func applyHorizontalScroll(_ str: String, scrollX: Int, width: Int) -> String {
+        var result = ""
+        var visibleCount = 0
+        var skipped = 0
+        var inEscape = false
+        var currentEscape = ""
+        
+        for char in str {
+            if char == "\u{1B}" {
+                inEscape = true
+                currentEscape = String(char)
+            } else if inEscape {
+                currentEscape.append(char)
+                if char.isLetter {
+                    inEscape = false
+                    if skipped >= scrollX {
+                        result.append(currentEscape)
+                    }
+                    currentEscape = ""
+                }
+            } else {
+                if skipped < scrollX {
+                    skipped += 1
+                } else if visibleCount < width {
+                    result.append(char)
+                    visibleCount += 1
+                } else {
+                    result.append(Theme.reset)
+                    break
+                }
+            }
+        }
+        
+        return result
+    }
+    
+    private func padToWidth(_ str: String, width: Int) -> String {
+        var visibleCount = 0
+        var inEscape = false
+        for char in str {
+            if char == "\u{1B}" {
+                inEscape = true
+            } else if inEscape {
+                if char.isLetter { inEscape = false }
+            } else {
+                visibleCount += 1
+            }
+        }
+        if visibleCount >= width {
+            return str
+        }
+        return str + String(repeating: " ", count: width - visibleCount)
+    }
+    
     private func truncateToWidth(_ str: String, width: Int) -> String {
         var result = ""
         var visibleCount = 0
@@ -516,8 +580,8 @@ class EditorApp {
     
     private func quit() {
         showCursor()
+        exitAlternateScreen()
         resetInputMode()
-        clearScreen()
         exit(0)
     }
 }

@@ -21,6 +21,7 @@ class EditorState: ObservableObject {
     @Published var isDirty: Bool = false
     @Published var showSavedIndicator: Bool = false
     @Published var scrollOffset: Int = 0
+    @Published var scrollX: Int = 0
     
     private var clipboard: String = ""
     private var savedTimer: DispatchWorkItem?
@@ -29,6 +30,7 @@ class EditorState: ObservableObject {
     private var redoStack: [DocumentSnapshot] = []
     private let maxUndoLevels = 100
     private let scrollMargin = 4
+    private let scrollMarginX = 8
     
     var onSavedIndicatorChanged: (() -> Void)?
     
@@ -261,8 +263,9 @@ class EditorState: ObservableObject {
         document.moveRight()
     }
     
-    func adjustScroll(viewportHeight: Int) {
+    func adjustScroll(viewportHeight: Int, viewportWidth: Int) {
         let cursorLine = document.cursorLine
+        let cursorColumn = document.cursorColumn
         
         if cursorLine < scrollOffset + scrollMargin {
             scrollOffset = max(0, cursorLine - scrollMargin)
@@ -275,6 +278,17 @@ class EditorState: ObservableObject {
         
         let maxScroll = max(0, document.lines.count - viewportHeight)
         scrollOffset = min(scrollOffset, maxScroll)
+        
+        if cursorColumn < scrollX + scrollMarginX {
+            scrollX = max(0, cursorColumn - scrollMarginX)
+        }
+        
+        let rightEdge = scrollX + viewportWidth - 1
+        if cursorColumn > rightEdge - scrollMarginX {
+            scrollX = cursorColumn - viewportWidth + scrollMarginX + 1
+        }
+        
+        scrollX = max(0, scrollX)
     }
     
     func pageUp(viewportHeight: Int) {
