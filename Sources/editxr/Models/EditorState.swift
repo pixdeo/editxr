@@ -5,17 +5,28 @@ enum ViewMode {
     case raw
 }
 
+struct DocumentSnapshot {
+    let lines: [String]
+    let cursorLine: Int
+    let cursorColumn: Int
+}
+
 class EditorState: ObservableObject {
     let filePath: String
     @Published var document: Document
     @Published var viewMode: ViewMode = .normal
     @Published var showStatusBar: Bool = true
     @Published var showHelp: Bool = true
+    @Published var showLineNumbers: Bool = false
     @Published var isDirty: Bool = false
     @Published var showSavedIndicator: Bool = false
     
     private var clipboard: String = ""
     private var savedTimer: DispatchWorkItem?
+    
+    private var undoStack: [DocumentSnapshot] = []
+    private var redoStack: [DocumentSnapshot] = []
+    private let maxUndoLevels = 100
     
     var onSavedIndicatorChanged: (() -> Void)?
     
@@ -37,6 +48,56 @@ class EditorState: ObservableObject {
             document = Document()
         }
         isDirty = false
+        undoStack.removeAll()
+        redoStack.removeAll()
+    }
+    
+    private func saveSnapshot() {
+        let snapshot = DocumentSnapshot(
+            lines: document.lines,
+            cursorLine: document.cursorLine,
+            cursorColumn: document.cursorColumn
+        )
+        undoStack.append(snapshot)
+        if undoStack.count > maxUndoLevels {
+            undoStack.removeFirst()
+        }
+        redoStack.removeAll()
+    }
+    
+    private func restoreSnapshot(_ snapshot: DocumentSnapshot) {
+        document.lines = snapshot.lines
+        document.cursorLine = snapshot.cursorLine
+        document.cursorColumn = snapshot.cursorColumn
+        document.clearSelection()
+    }
+    
+    func undo() {
+        guard let snapshot = undoStack.popLast() else { return }
+        
+        let currentSnapshot = DocumentSnapshot(
+            lines: document.lines,
+            cursorLine: document.cursorLine,
+            cursorColumn: document.cursorColumn
+        )
+        redoStack.append(currentSnapshot)
+        
+        restoreSnapshot(snapshot)
+        isDirty = true
+    }
+    
+    func redo() {
+        guard let snapshot = redoStack.popLast() else { return }
+        
+        let currentSnapshot = DocumentSnapshot(
+            lines: document.lines,
+            cursorLine: document.cursorLine,
+            cursorColumn: document.cursorColumn
+        )
+        undoStack.append(currentSnapshot)
+        
+        restoreSnapshot(snapshot)
+        isDirty = true
     }
     
     func save() {
@@ -64,11 +125,16 @@ class EditorState: ObservableObject {
         showStatusBar.toggle()
     }
     
+    func toggleLineNumbers() {
+        showLineNumbers.toggle()
+    }
+    
     func toggleHelp() {
         showHelp.toggle()
     }
     
     func handleCharacter(_ char: Character) {
+        saveSnapshot()
         if document.hasSelection {
             document.deleteSelection()
         }
@@ -77,6 +143,7 @@ class EditorState: ObservableObject {
     }
     
     func handleNewline() {
+        saveSnapshot()
         if document.hasSelection {
             document.deleteSelection()
         }
@@ -85,6 +152,7 @@ class EditorState: ObservableObject {
     }
     
     func handleBackspace() {
+        saveSnapshot()
         if document.hasSelection {
             document.deleteSelection()
             isDirty = true
@@ -96,6 +164,7 @@ class EditorState: ObservableObject {
     
     func deleteSelection() {
         if document.hasSelection {
+            saveSnapshot()
             document.deleteSelection()
             isDirty = true
         }
@@ -109,6 +178,7 @@ class EditorState: ObservableObject {
     
     func cut() {
         if let text = document.selectedText {
+            saveSnapshot()
             clipboard = text
             document.deleteSelection()
             isDirty = true
@@ -117,6 +187,7 @@ class EditorState: ObservableObject {
     
     func paste() {
         guard !clipboard.isEmpty else { return }
+        saveSnapshot()
         if document.hasSelection {
             document.deleteSelection()
         }

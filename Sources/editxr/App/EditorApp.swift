@@ -90,8 +90,17 @@ class EditorApp {
             case Key.ctrlH:
                 state.toggleHelp()
                 render()
+            case Key.ctrlL:
+                state.toggleLineNumbers()
+                render()
             case Key.ctrlV:
                 state.paste()
+                render()
+            case Key.ctrlU:
+                state.undo()
+                render()
+            case Key.ctrlG:
+                state.redo()
                 render()
             case Key.enter:
                 state.handleNewline()
@@ -167,21 +176,40 @@ class EditorApp {
         return (80, 24)
     }
     
+    private func gutterWidth() -> Int {
+        if state.showLineNumbers {
+            let maxLineNum = state.document.lines.count
+            return String(maxLineNum).count + 1
+        }
+        return 1
+    }
+    
+    private func renderGutter(lineNumber: Int, width: Int) -> String {
+        if state.showLineNumbers {
+            let numStr = String(lineNumber)
+            let padding = String(repeating: " ", count: width - numStr.count - 1)
+            return "\(Theme.gutter)\(padding)\(numStr) \(Theme.reset)"
+        }
+        return " "
+    }
+    
     private func renderEditor(width: Int, height: Int) -> String {
         var lines: [String] = []
         let reservedLines = 2
         
         let contentHeight = height - reservedLines
+        let gutter = gutterWidth()
+        let contentWidth = width - gutter
         
         switch state.viewMode {
         case .normal:
-            lines = renderNormalMode(width: width, height: contentHeight)
+            lines = renderNormalMode(width: contentWidth, height: contentHeight, gutterWidth: gutter)
         case .raw:
-            lines = renderRawMode(width: width, height: contentHeight)
+            lines = renderRawMode(width: contentWidth, height: contentHeight, gutterWidth: gutter)
         }
         
         while lines.count < contentHeight {
-            lines.append("")
+            lines.append(renderGutter(lineNumber: 0, width: gutter).replacingOccurrences(of: String(0), with: " "))
         }
         
         lines.append(renderStatusBar(width: width))
@@ -195,7 +223,7 @@ class EditorApp {
         return lines.joined(separator: "\n")
     }
     
-    private func renderNormalMode(width: Int, height: Int) -> [String] {
+    private func renderNormalMode(width: Int, height: Int, gutterWidth: Int) -> [String] {
         var output: [String] = []
         let doc = state.document
         
@@ -220,13 +248,14 @@ class EditorApp {
                 renderedLine = renderLineCollapsed(line: line, spans: spans, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn)
             }
             
-            output.append(renderedLine)
+            let gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
+            output.append(gutter + renderedLine)
         }
         
         return output
     }
     
-    private func renderRawMode(width: Int, height: Int) -> [String] {
+    private func renderRawMode(width: Int, height: Int, gutterWidth: Int) -> [String] {
         var output: [String] = []
         let doc = state.document
         
@@ -249,7 +278,8 @@ class EditorApp {
                 renderedLine = line
             }
             
-            output.append(renderedLine)
+            let gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
+            output.append(gutter + renderedLine)
         }
         
         return output
@@ -393,10 +423,9 @@ class EditorApp {
             ("^Q", "quit"),
             ("^S", "save"),
             ("^R", "raw"),
-            ("^V", "paste"),
-            ("c", "copy"),
-            ("x", "cut"),
-            ("d", "delete")
+            ("^L", "lines"),
+            ("^U", "undo"),
+            ("^G", "redo")
         ]
         
         var parts: [String] = []
