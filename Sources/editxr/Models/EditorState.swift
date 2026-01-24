@@ -18,6 +18,7 @@ class EditorState: ObservableObject {
     @Published var showStatusBar: Bool = true
     @Published var showHelp: Bool = true
     @Published var showLineNumbers: Bool = false
+    @Published var wordWrap: Bool = true
     @Published var isDirty: Bool = false
     @Published var showSavedIndicator: Bool = false
     @Published var scrollOffset: Int = 0
@@ -137,6 +138,11 @@ class EditorState: ObservableObject {
         showHelp.toggle()
     }
     
+    func toggleWordWrap() {
+        wordWrap.toggle()
+        scrollX = 0
+    }
+    
     func handleCharacter(_ char: Character) {
         saveSnapshot()
         if document.hasSelection {
@@ -205,14 +211,122 @@ class EditorState: ObservableObject {
         isDirty = true
     }
     
+    private var lastViewportWidth: Int = 80
+    
     func moveUp(selecting: Bool = false) {
         if selecting { document.startSelection() } else { document.clearSelection() }
-        document.moveUp()
+        
+        if wordWrap {
+            moveUpWrapped()
+        } else {
+            document.moveUp()
+        }
     }
     
     func moveDown(selecting: Bool = false) {
         if selecting { document.startSelection() } else { document.clearSelection() }
-        document.moveDown()
+        
+        if wordWrap {
+            moveDownWrapped()
+        } else {
+            document.moveDown()
+        }
+    }
+    
+    private func moveUpWrapped() {
+        let line = document.currentLineText
+        let segments = wrapLineForNavigation(line, width: lastViewportWidth)
+        
+        var currentSegmentIndex = 0
+        var localColumn = document.cursorColumn
+        
+        for (i, seg) in segments.enumerated() {
+            if document.cursorColumn >= seg.startOffset && document.cursorColumn < seg.startOffset + seg.segment.count + 1 {
+                currentSegmentIndex = i
+                localColumn = document.cursorColumn - seg.startOffset
+                break
+            }
+        }
+        
+        if currentSegmentIndex > 0 {
+            let prevSegment = segments[currentSegmentIndex - 1]
+            document.cursorColumn = min(prevSegment.startOffset + localColumn, prevSegment.startOffset + prevSegment.segment.count)
+        } else {
+            if document.cursorLine > 0 {
+                document.cursorLine -= 1
+                let prevLine = document.currentLineText
+                let prevSegments = wrapLineForNavigation(prevLine, width: lastViewportWidth)
+                if let lastSeg = prevSegments.last {
+                    document.cursorColumn = min(lastSeg.startOffset + localColumn, prevLine.count)
+                }
+            }
+        }
+    }
+    
+    private func moveDownWrapped() {
+        let line = document.currentLineText
+        let segments = wrapLineForNavigation(line, width: lastViewportWidth)
+        
+        var currentSegmentIndex = 0
+        var localColumn = document.cursorColumn
+        
+        for (i, seg) in segments.enumerated() {
+            let segEnd = i == segments.count - 1 ? seg.startOffset + seg.segment.count + 1 : seg.startOffset + seg.segment.count
+            if document.cursorColumn >= seg.startOffset && document.cursorColumn < segEnd {
+                currentSegmentIndex = i
+                localColumn = document.cursorColumn - seg.startOffset
+                break
+            }
+        }
+        
+        if currentSegmentIndex < segments.count - 1 {
+            let nextSegment = segments[currentSegmentIndex + 1]
+            document.cursorColumn = min(nextSegment.startOffset + localColumn, nextSegment.startOffset + nextSegment.segment.count)
+        } else {
+            if document.cursorLine < document.lines.count - 1 {
+                document.cursorLine += 1
+                let nextLine = document.currentLineText
+                let nextSegments = wrapLineForNavigation(nextLine, width: lastViewportWidth)
+                if let firstSeg = nextSegments.first {
+                    document.cursorColumn = min(firstSeg.startOffset + localColumn, nextLine.count)
+                }
+            }
+        }
+    }
+    
+    private func wrapLineForNavigation(_ line: String, width: Int) -> [(segment: String, startOffset: Int)] {
+        guard width > 0 else { return [(line, 0)] }
+        if line.isEmpty { return [("", 0)] }
+        if line.count <= width { return [(line, 0)] }
+        
+        var segments: [(segment: String, startOffset: Int)] = []
+        var remaining = line
+        var offset = 0
+        
+        while !remaining.isEmpty {
+            if remaining.count <= width {
+                segments.append((remaining, offset))
+                break
+            }
+            
+            let chunk = String(remaining.prefix(width))
+            if let lastSpace = chunk.lastIndex(of: " "), lastSpace > chunk.startIndex {
+                let breakPoint = chunk.distance(from: chunk.startIndex, to: lastSpace)
+                segments.append((String(remaining.prefix(breakPoint)), offset))
+                offset += breakPoint + 1
+                remaining = String(remaining.dropFirst(breakPoint + 1))
+            } else {
+                segments.append((chunk, offset))
+                offset += width
+                remaining = String(remaining.dropFirst(width))
+            }
+        }
+        
+        return segments.isEmpty ? [("", 0)] : segments
+    }
+    
+    func setViewportWidth(_ width: Int) {
+        lastViewportWidth = width
     }
     
     func moveLeft(selecting: Bool = false) {
@@ -264,6 +378,11 @@ class EditorState: ObservableObject {
     }
     
     func adjustScroll(viewportHeight: Int, viewportWidth: Int) {
+        if wordWrap {
+            adjustScrollWrapped(viewportHeight: viewportHeight, viewportWidth: viewportWidth)
+            return
+        }
+        
         let cursorLine = document.cursorLine
         let cursorColumn = document.cursorColumn
         
@@ -289,6 +408,58 @@ class EditorState: ObservableObject {
         }
         
         scrollX = max(0, scrollX)
+    }
+    
+    private func adjustScrollWrapped(viewportHeight: Int, viewportWidth: Int) {
+        let cursorVisualLine = visualLineForCursor(viewportWidth: viewportWidth)
+        
+        if cursorVisualLine < scrollOffset + scrollMargin {
+            scrollOffset = max(0, cursorVisualLine - scrollMargin)
+        }
+        
+        let bottomEdge = scrollOffset + viewportHeight - 1
+        if cursorVisualLine > bottomEdge - scrollMargin {
+            scrollOffset = cursorVisualLine - viewportHeight + scrollMargin + 1
+        }
+        
+        let totalVisualLines = countVisualLines(viewportWidth: viewportWidth)
+        let maxScroll = max(0, totalVisualLines - viewportHeight)
+        scrollOffset = min(scrollOffset, maxScroll)
+    }
+    
+    private func visualLineForCursor(viewportWidth: Int) -> Int {
+        var visualLine = 0
+        for i in 0..<document.cursorLine {
+            visualLine += wrappedLineCount(document.lines[i], width: viewportWidth)
+        }
+        let currentLine = document.lines[document.cursorLine]
+        let segmentIndex = document.cursorColumn / max(1, viewportWidth)
+        visualLine += min(segmentIndex, wrappedLineCount(currentLine, width: viewportWidth) - 1)
+        return visualLine
+    }
+    
+    private func countVisualLines(viewportWidth: Int) -> Int {
+        var total = 0
+        for line in document.lines {
+            total += wrappedLineCount(line, width: viewportWidth)
+        }
+        return total
+    }
+    
+    private func wrappedLineCount(_ line: String, width: Int) -> Int {
+        guard width > 0 else { return 1 }
+        if line.isEmpty { return 1 }
+        if line.count <= width { return 1 }
+        
+        var count = 0
+        var remaining = line.count
+        
+        while remaining > 0 {
+            count += 1
+            remaining -= width
+        }
+        
+        return max(1, count)
     }
     
     func pageUp(viewportHeight: Int) {

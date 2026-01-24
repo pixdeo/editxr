@@ -113,6 +113,9 @@ class EditorApp {
             case Key.ctrlG:
                 state.redo()
                 render()
+            case Key.ctrlW:
+                state.toggleWordWrap()
+                render()
             case Key.enter:
                 state.handleNewline()
                 render()
@@ -218,6 +221,7 @@ class EditorApp {
         let gutter = gutterWidth()
         let contentWidth = width - gutter
         
+        state.setViewportWidth(contentWidth)
         state.adjustScroll(viewportHeight: contentHeight, viewportWidth: contentWidth)
         
         switch state.viewMode {
@@ -246,11 +250,14 @@ class EditorApp {
     private func renderNormalMode(width: Int, height: Int, gutterWidth: Int) -> [String] {
         var output: [String] = []
         let doc = state.document
+        let selection = doc.selectionRange
+        
+        if state.wordWrap {
+            return renderNormalModeWrapped(width: width, height: height, gutterWidth: gutterWidth)
+        }
         
         let startLine = state.scrollOffset
         let endLine = min(doc.lines.count, startLine + height)
-        
-        let selection = doc.selectionRange
         
         var inCodeBlock = isInsideCodeBlock(beforeLine: startLine, doc: doc)
         
@@ -288,6 +295,273 @@ class EditorApp {
         return output
     }
     
+    private func renderNormalModeWrapped(width: Int, height: Int, gutterWidth: Int) -> [String] {
+        var output: [String] = []
+        let doc = state.document
+        let selection = doc.selectionRange
+        
+        var visualLine = 0
+        var inCodeBlock = false
+        
+        for i in 0..<doc.lines.count {
+            let line = doc.lines[i]
+            let isCodeDelimiter = MarkdownLineParser.isCodeBlockDelimiter(line)
+            
+            if isCodeDelimiter {
+                inCodeBlock = !inCodeBlock
+            }
+            
+            let isCursorLine = i == doc.cursorLine
+            let spans = MarkdownLineParser.parse(line)
+            let cursorInSpan = isCursorLine ? MarkdownLineParser.spanContainingCursor(column: doc.cursorColumn, spans: spans) : nil
+            
+            if let headingSpan = spans.first, isHeadingSpan(headingSpan), cursorInSpan == nil {
+                let collapsedLine = headingSpan.content
+                let visualCursor = isCursorLine ? MarkdownLineParser.rawToVisual(column: doc.cursorColumn, spans: spans) : -1
+                let wrappedSegments = wrapLine(collapsedLine, width: width)
+                
+                for (segmentIndex, wrapped) in wrappedSegments.enumerated() {
+                    if visualLine >= state.scrollOffset && output.count < height {
+                        let segment = wrapped.segment
+                        let segmentStart = wrapped.startOffset
+                        let segmentEnd = segmentStart + segment.count
+                        
+                        let isLastSegment = segmentIndex == wrappedSegments.count - 1
+                        let cursorInSegment = isCursorLine && visualCursor >= segmentStart && (visualCursor < segmentEnd || (isLastSegment && visualCursor == segmentEnd))
+                        let localCursor = cursorInSegment ? visualCursor - segmentStart : -1
+                        
+                        let style = headingStyle(headingSpan.kind)
+                        let renderedLine = renderStyledSegment(segment: segment, style: style, cursorColumn: localCursor)
+                        
+                        let gutter: String
+                        if segmentIndex == 0 {
+                            gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
+                        } else {
+                            gutter = String(repeating: " ", count: gutterWidth)
+                        }
+                        
+                        output.append(padToWidth(gutter + renderedLine, width: gutterWidth + width))
+                    }
+                    visualLine += 1
+                }
+                
+                if isCursorLine && visualCursor == collapsedLine.count {
+                    if let lastSeg = wrappedSegments.last, lastSeg.segment.count == width {
+                        if visualLine >= state.scrollOffset && output.count < height {
+                            let gutter = String(repeating: " ", count: gutterWidth)
+                            let cursorLine = "\(Theme.inverse) \(Theme.reset)"
+                            output.append(padToWidth(gutter + cursorLine, width: gutterWidth + width))
+                        }
+                        visualLine += 1
+                    }
+                }
+            } else {
+                let wrappedSegments = wrapLine(line, width: width)
+                
+                for (segmentIndex, wrapped) in wrappedSegments.enumerated() {
+                    if visualLine >= state.scrollOffset && output.count < height {
+                        let segment = wrapped.segment
+                        let segmentStart = wrapped.startOffset
+                        let segmentEnd = segmentStart + segment.count
+                        
+                        let isLastSegment = segmentIndex == wrappedSegments.count - 1
+                        let cursorInSegment = isCursorLine && doc.cursorColumn >= segmentStart && doc.cursorColumn < segmentEnd
+                        let cursorAtSegmentEnd = isCursorLine && isLastSegment && doc.cursorColumn == segmentEnd && segment.count < width
+                        let localCursor = (cursorInSegment || cursorAtSegmentEnd) ? doc.cursorColumn - segmentStart : -1
+                        
+                        var renderedLine: String
+                        
+                        if selection != nil {
+                            renderedLine = renderSegmentWithSelection(segment: segment, lineIndex: i, segmentStart: segmentStart, selection: selection, doc: doc)
+                        } else if inCodeBlock || isCodeDelimiter {
+                            renderedLine = renderCodeBlockSegment(segment: segment, cursorColumn: localCursor)
+                        } else if cursorInSpan != nil && cursorInSegment {
+                            renderedLine = renderLineRaw(line: segment, cursorColumn: localCursor)
+                        } else {
+                            renderedLine = renderSegmentCollapsed(segment: segment, segmentStart: segmentStart, spans: spans, cursorColumn: localCursor)
+                        }
+                        
+                        let gutter: String
+                        if segmentIndex == 0 {
+                            gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
+                        } else {
+                            gutter = String(repeating: " ", count: gutterWidth)
+                        }
+                        
+                        output.append(padToWidth(gutter + renderedLine, width: gutterWidth + width))
+                    }
+                    visualLine += 1
+                }
+                
+                if isCursorLine && doc.cursorColumn == line.count {
+                    if let lastSeg = wrappedSegments.last, lastSeg.segment.count == width {
+                        if visualLine >= state.scrollOffset && output.count < height {
+                            let gutter = String(repeating: " ", count: gutterWidth)
+                            let cursorLine = "\(Theme.inverse) \(Theme.reset)"
+                            output.append(padToWidth(gutter + cursorLine, width: gutterWidth + width))
+                        }
+                        visualLine += 1
+                    }
+                }
+            }
+        }
+        
+        return output
+    }
+    
+    private func isHeadingSpan(_ span: MarkdownSpan) -> Bool {
+        switch span.kind {
+        case .heading1, .heading2, .heading3: return true
+        default: return false
+        }
+    }
+    
+    private func headingStyle(_ kind: SpanKind) -> String {
+        switch kind {
+        case .heading1: return Theme.heading1
+        case .heading2: return Theme.heading2
+        case .heading3: return Theme.heading3
+        default: return ""
+        }
+    }
+    
+    private func renderStyledSegment(segment: String, style: String, cursorColumn: Int) -> String {
+        var result = ""
+        for (i, char) in segment.enumerated() {
+            if i == cursorColumn {
+                result += "\(Theme.inverse)\(char)\(Theme.reset)"
+            } else {
+                result += "\(style)\(char)\(Theme.reset)"
+            }
+        }
+        if cursorColumn == segment.count {
+            result += "\(Theme.inverse) \(Theme.reset)"
+        }
+        return result
+    }
+    
+    private func renderSegmentCollapsed(segment: String, segmentStart: Int, spans: [MarkdownSpan], cursorColumn: Int) -> String {
+        if spans.isEmpty {
+            if cursorColumn >= 0 {
+                return renderLineRaw(line: segment, cursorColumn: cursorColumn)
+            }
+            return segment
+        }
+        
+        var result = ""
+        
+        for (i, char) in segment.enumerated() {
+            let globalPos = segmentStart + i
+            let isCursor = i == cursorColumn
+            
+            var style = ""
+            for span in spans {
+                if globalPos >= span.contentStart && globalPos < span.contentEnd {
+                    switch span.kind {
+                    case .bold: style = Theme.bold
+                    case .italic: style = Theme.italic
+                    case .code: style = Theme.string
+                    case .heading1: style = Theme.heading1
+                    case .heading2: style = Theme.heading2
+                    case .heading3: style = Theme.heading3
+                    }
+                    break
+                }
+            }
+            
+            if isCursor {
+                result += "\(Theme.inverse)\(char)\(Theme.reset)"
+            } else if !style.isEmpty {
+                result += "\(style)\(char)\(Theme.reset)"
+            } else {
+                result += String(char)
+            }
+        }
+        
+        if cursorColumn >= segment.count && cursorColumn >= 0 {
+            result += "\(Theme.inverse) \(Theme.reset)"
+        }
+        
+        return result
+    }
+    
+    private func wrapLine(_ line: String, width: Int) -> [(segment: String, startOffset: Int)] {
+        guard width > 0 else { return [(line, 0)] }
+        if line.isEmpty { return [("", 0)] }
+        if line.count <= width { return [(line, 0)] }
+        
+        var segments: [(segment: String, startOffset: Int)] = []
+        var remaining = line
+        var offset = 0
+        
+        while !remaining.isEmpty {
+            if remaining.count <= width {
+                segments.append((remaining, offset))
+                break
+            }
+            
+            let chunk = String(remaining.prefix(width))
+            if let lastSpace = chunk.lastIndex(of: " "), lastSpace > chunk.startIndex {
+                let breakPoint = chunk.distance(from: chunk.startIndex, to: lastSpace)
+                segments.append((String(remaining.prefix(breakPoint)), offset))
+                offset += breakPoint + 1
+                remaining = String(remaining.dropFirst(breakPoint + 1))
+            } else {
+                segments.append((chunk, offset))
+                offset += width
+                remaining = String(remaining.dropFirst(width))
+            }
+        }
+        
+        return segments.isEmpty ? [("", 0)] : segments
+    }
+    
+    private func renderSegmentWithSelection(segment: String, lineIndex: Int, segmentStart: Int, selection: (start: CursorPosition, end: CursorPosition)?, doc: Document) -> String {
+        guard let sel = selection else { return segment }
+        
+        let isStartLine = lineIndex == sel.start.line
+        let isEndLine = lineIndex == sel.end.line
+        let isBetween = lineIndex > sel.start.line && lineIndex < sel.end.line
+        
+        if !isStartLine && !isEndLine && !isBetween {
+            return segment
+        }
+        
+        let selStart = "\(Theme.selectionBg)\(Theme.selectionFg)"
+        let selEnd = Theme.reset
+        
+        if isBetween {
+            return selStart + segment + selEnd
+        }
+        
+        let lineSelStart = isStartLine ? sel.start.column : 0
+        let lineSelEnd = isEndLine ? sel.end.column : Int.max
+        
+        let localSelStart = max(0, lineSelStart - segmentStart)
+        let localSelEnd = min(segment.count, lineSelEnd - segmentStart)
+        
+        if localSelEnd <= 0 || localSelStart >= segment.count {
+            return segment
+        }
+        
+        let before = String(segment.prefix(localSelStart))
+        let selected = String(segment.dropFirst(localSelStart).prefix(localSelEnd - localSelStart))
+        let after = String(segment.dropFirst(localSelEnd))
+        
+        return before + selStart + selected + selEnd + after
+    }
+    
+    private func renderCodeBlockSegment(segment: String, cursorColumn: Int) -> String {
+        if cursorColumn >= 0 {
+            let col = min(cursorColumn, segment.count)
+            let before = String(segment.prefix(col))
+            let charAtCursor = col < segment.count ? String(segment[segment.index(segment.startIndex, offsetBy: col)]) : " "
+            let after = col < segment.count ? String(segment.dropFirst(col + 1)) : ""
+            return "\(Theme.codeBlock)\(before)\(Theme.inverse)\(charAtCursor)\(Theme.reset)\(Theme.codeBlock)\(after)\(Theme.reset)"
+        }
+        return "\(Theme.codeBlock)\(segment)\(Theme.reset)"
+    }
+    
     private func isInsideCodeBlock(beforeLine: Int, doc: Document) -> Bool {
         var inside = false
         for i in 0..<beforeLine {
@@ -312,11 +586,14 @@ class EditorApp {
     private func renderRawMode(width: Int, height: Int, gutterWidth: Int) -> [String] {
         var output: [String] = []
         let doc = state.document
+        let selection = doc.selectionRange
+        
+        if state.wordWrap {
+            return renderRawModeWrapped(width: width, height: height, gutterWidth: gutterWidth)
+        }
         
         let startLine = state.scrollOffset
         let endLine = min(doc.lines.count, startLine + height)
-        
-        let selection = doc.selectionRange
         
         for i in startLine..<endLine {
             let line = doc.lines[i]
@@ -335,6 +612,66 @@ class EditorApp {
             let gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
             let scrolled = applyHorizontalScroll(renderedLine, scrollX: state.scrollX, width: width)
             output.append(padToWidth(gutter + scrolled, width: gutterWidth + width))
+        }
+        
+        return output
+    }
+    
+    private func renderRawModeWrapped(width: Int, height: Int, gutterWidth: Int) -> [String] {
+        var output: [String] = []
+        let doc = state.document
+        let selection = doc.selectionRange
+        
+        var visualLine = 0
+        
+        for i in 0..<doc.lines.count {
+            let line = doc.lines[i]
+            let isCursorLine = i == doc.cursorLine
+            let wrappedSegments = wrapLine(line, width: width)
+            
+            for (segmentIndex, wrapped) in wrappedSegments.enumerated() {
+                if visualLine >= state.scrollOffset && output.count < height {
+                    let segment = wrapped.segment
+                    let segmentStart = wrapped.startOffset
+                    let segmentEnd = segmentStart + segment.count
+                    
+                    let isLastSegment = segmentIndex == wrappedSegments.count - 1
+                    let cursorInSegment = isCursorLine && doc.cursorColumn >= segmentStart && doc.cursorColumn < segmentEnd
+                    let cursorAtSegmentEnd = isCursorLine && isLastSegment && doc.cursorColumn == segmentEnd && segment.count < width
+                    let localCursor = (cursorInSegment || cursorAtSegmentEnd) ? doc.cursorColumn - segmentStart : -1
+                    
+                    var renderedLine: String
+                    
+                    if selection != nil {
+                        renderedLine = renderSegmentWithSelection(segment: segment, lineIndex: i, segmentStart: segmentStart, selection: selection, doc: doc)
+                    } else if cursorInSegment || cursorAtSegmentEnd {
+                        renderedLine = renderLineRaw(line: segment, cursorColumn: localCursor)
+                    } else {
+                        renderedLine = segment
+                    }
+                    
+                    let gutter: String
+                    if segmentIndex == 0 {
+                        gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
+                    } else {
+                        gutter = String(repeating: " ", count: gutterWidth)
+                    }
+                    
+                    output.append(padToWidth(gutter + renderedLine, width: gutterWidth + width))
+                }
+                visualLine += 1
+            }
+            
+            if isCursorLine && doc.cursorColumn == line.count {
+                if let lastSeg = wrappedSegments.last, lastSeg.segment.count == width {
+                    if visualLine >= state.scrollOffset && output.count < height {
+                        let gutter = String(repeating: " ", count: gutterWidth)
+                        let cursorLine = "\(Theme.inverse) \(Theme.reset)"
+                        output.append(padToWidth(gutter + cursorLine, width: gutterWidth + width))
+                    }
+                    visualLine += 1
+                }
+            }
         }
         
         return output
@@ -564,6 +901,7 @@ class EditorApp {
             ("^Q", "quit"),
             ("^S", "save"),
             ("^R", "raw"),
+            ("^W", "wrap"),
             ("^L", "lines"),
             ("^U", "undo"),
             ("^G", "redo")

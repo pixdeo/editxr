@@ -8,6 +8,7 @@ enum Key {
     static let ctrlH: Character = "\u{08}"
     static let ctrlU: Character = "\u{15}"
     static let ctrlG: Character = "\u{07}"
+    static let ctrlW: Character = "\u{17}"
     static let enter: Character = "\n"
     static let backspace: Character = "\u{7f}"
     static let tab: Character = "\t"
