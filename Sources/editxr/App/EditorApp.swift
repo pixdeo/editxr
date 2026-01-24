@@ -367,9 +367,10 @@ class EditorApp {
                 renderedLine = renderCodeBlockLine(line: line, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn)
             } else {
                 let spans = MarkdownLineParser.parse(line)
+                let isHeading = spans.first.map { isHeadingSpan($0) } ?? false
                 let cursorInSpan = isCursorLine ? MarkdownLineParser.spanContainingCursor(column: doc.cursorColumn, spans: spans) : nil
                 
-                if cursorInSpan != nil {
+                if (isHeading && isCursorLine) || cursorInSpan != nil {
                     renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
                 } else {
                     renderedLine = renderLineCollapsed(line: line, spans: spans, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn)
@@ -404,7 +405,7 @@ class EditorApp {
             let spans = MarkdownLineParser.parse(line)
             let cursorInSpan = isCursorLine ? MarkdownLineParser.spanContainingCursor(column: doc.cursorColumn, spans: spans) : nil
             
-            if let headingSpan = spans.first, isHeadingSpan(headingSpan), cursorInSpan == nil {
+            if let headingSpan = spans.first, isHeadingSpan(headingSpan), !isCursorLine {
                 let collapsedLine = headingSpan.content
                 let visualCursor = isCursorLine ? MarkdownLineParser.rawToVisual(column: doc.cursorColumn, spans: spans) : -1
                 let wrappedSegments = wrapLine(collapsedLine, width: width)
@@ -446,6 +447,7 @@ class EditorApp {
                 }
             } else {
                 let wrappedSegments = wrapLine(line, width: width)
+                let isHeading = spans.first.map { isHeadingSpan($0) } ?? false
                 
                 for (segmentIndex, wrapped) in wrappedSegments.enumerated() {
                     if visualLine >= state.scrollOffset && output.count < height {
@@ -464,7 +466,7 @@ class EditorApp {
                             renderedLine = renderSegmentWithSelection(segment: segment, lineIndex: i, segmentStart: segmentStart, selection: selection, doc: doc)
                         } else if inCodeBlock || isCodeDelimiter {
                             renderedLine = renderCodeBlockSegment(segment: segment, cursorColumn: localCursor)
-                        } else if cursorInSpan != nil && cursorInSegment {
+                        } else if (isHeading && isCursorLine) || (cursorInSpan != nil && cursorInSegment) {
                             renderedLine = renderLineRaw(line: segment, cursorColumn: localCursor)
                         } else {
                             renderedLine = renderSegmentCollapsed(segment: segment, segmentStart: segmentStart, spans: spans, cursorColumn: localCursor)
