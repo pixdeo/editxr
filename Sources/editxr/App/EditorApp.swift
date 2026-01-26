@@ -6,6 +6,42 @@ private enum SegmentRenderMode {
     case codeBlock
     case selection
     case heading(String)
+    case list(ListRender)
+    case quote(QuoteRender)
+}
+
+private enum TodoState {
+    case unchecked
+    case checked
+    case partial
+}
+
+private enum ListLineKind {
+    case bullet
+    case todo(TodoState)
+}
+
+private struct ListLine {
+    let indent: String
+    let kind: ListLineKind
+    let content: String
+}
+
+private struct ListRender {
+    let prefix: String
+    let prefixStyle: String
+    let contentSpans: [MarkdownSpan]
+}
+
+private struct QuoteLine {
+    let indent: String
+    let content: String
+}
+
+private struct QuoteRender {
+    let prefix: String
+    let prefixStyle: String
+    let contentSpans: [MarkdownSpan]
 }
 
 class EditorApp {
@@ -14,6 +50,8 @@ class EditorApp {
     private var arrowKeyParser = ArrowKeyParser()
     private let llmService = LLMService()
     private var llmModal: LLMModal?
+    private let openAIOAuth = OpenAIOAuth()
+    private var commandPanel: CommandPanel?
     
     init(state: EditorState) {
         self.state = state
@@ -24,6 +62,21 @@ class EditorApp {
         llmModal = LLMModal(llmService: llmService)
         llmModal?.onStateChanged = { [weak self] in
             self?.render()
+        }
+
+        llmService.setProvider(state.llmProvider, openAIAccessToken: state.openAIAccessToken)
+
+        commandPanel = CommandPanel(selectedProvider: state.llmProvider, openAIIsSignedIn: state.openAIIsSignedIn)
+        commandPanel?.onStateChanged = { [weak self] in
+            self?.render()
+        }
+        commandPanel?.onSelectProvider = { [weak self] provider in
+            guard let self = self else { return }
+            self.state.setLLMProvider(provider)
+            self.llmService.setProvider(provider, openAIAccessToken: self.state.openAIAccessToken)
+        }
+        commandPanel?.onRequestOpenAIOAuth = { [weak self] in
+            self?.startOpenAIOAuth()
         }
     }
     
@@ -94,6 +147,27 @@ class EditorApp {
     private func handleInput() {
         let data = FileHandle.standardInput.availableData
         guard let string = String(data: data, encoding: .utf8) else { return }
+
+        if let panel = commandPanel, panel.isVisible {
+            for char in string {
+                if char == Key.ctrlP {
+                    toggleCommandPanel()
+                    return
+                }
+                if char == Key.escape && panel.isOAuthInProgress {
+                    openAIOAuth.cancel()
+                }
+                panel.handleKey(char)
+            }
+            render()
+            return
+        }
+        
+        if let pasteContent = extractBracketedPaste(string) {
+            handlePaste(pasteContent)
+            render()
+            return
+        }
         
         var needsRender = false
         
@@ -121,8 +195,13 @@ class EditorApp {
                 state.toggleViewMode()
                 needsRender = true
             case Key.ctrlH:
+                state.deleteWordBackward()
+                needsRender = true
+            case Key.ctrlSlash:
                 state.toggleHelp()
                 needsRender = true
+            case Key.ctrlP:
+                toggleCommandPanel()
             case Key.ctrlL:
                 state.toggleLineNumbers()
                 needsRender = true
@@ -340,8 +419,50 @@ class EditorApp {
         } else {
             lines.append(String(repeating: " ", count: width))
         }
+
+        if let overlay = commandPanel?.render(width: width, height: height) {
+            for (i, overlayLine) in overlay.lines.enumerated() {
+                let row = overlay.top + i
+                if row >= 0 && row < lines.count {
+                    lines[row] = padToWidth(overlayLine, width: width)
+                }
+            }
+        }
         
         return lines.joined(separator: "\n")
+    }
+
+    private func toggleCommandPanel() {
+        guard let panel = commandPanel else { return }
+        if panel.isVisible {
+            openAIOAuth.cancel()
+            panel.hide()
+        } else {
+            panel.show(selectedProvider: state.llmProvider, openAIIsSignedIn: state.openAIIsSignedIn)
+        }
+        render()
+    }
+
+    private func startOpenAIOAuth() {
+        commandPanel?.setOAuthStatus(url: "", message: "Starting...")
+        openAIOAuth.start(
+            onUpdate: { [weak self] url, message in
+                self?.commandPanel?.setOAuthStatus(url: url, message: message)
+            },
+            completion: { [weak self] result in
+                guard let self = self else { return }
+                switch result {
+                case .success(let tokens):
+                    self.state.setOpenAITokens(accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt)
+                    self.state.setLLMProvider(.openaiOAuth)
+                    self.llmService.setProvider(.openaiOAuth, openAIAccessToken: self.state.openAIAccessToken)
+                    self.commandPanel?.setOpenAISignedIn(true)
+                    self.commandPanel?.hide()
+                case .failure(let err):
+                    self.commandPanel?.setError(err.localizedDescription)
+                }
+            }
+        )
     }
     
     private func renderNormalMode(width: Int, height: Int, gutterWidth: Int) -> [String] {
@@ -374,14 +495,28 @@ class EditorApp {
             } else if inCodeBlock || isCodeDelimiter {
                 renderedLine = renderCodeBlockLine(line: line, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn)
             } else {
-                let spans = MarkdownLineParser.parse(line)
-                let isHeading = spans.first.map { isHeadingSpan($0) } ?? false
-                let cursorInSpan = isCursorLine ? MarkdownLineParser.spanContainingCursor(column: doc.cursorColumn, spans: spans) : nil
-                
-                if (isHeading && isCursorLine) || cursorInSpan != nil {
-                    renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
+                if let quote = parseQuoteLine(line) {
+                    if isCursorLine {
+                        renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
+                    } else {
+                        renderedLine = renderQuoteLine(quote)
+                    }
+                } else if let list = parseListLine(line) {
+                    if isCursorLine {
+                        renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
+                    } else {
+                        renderedLine = renderListLine(list)
+                    }
                 } else {
-                    renderedLine = renderLineCollapsed(line: line, spans: spans, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn)
+                    let spans = MarkdownLineParser.parse(line)
+                    let isHeading = spans.first.map { isHeadingSpan($0) } ?? false
+                    let cursorInSpan = isCursorLine ? MarkdownLineParser.spanContainingCursor(column: doc.cursorColumn, spans: spans) : nil
+
+                    if (isHeading && isCursorLine) || cursorInSpan != nil {
+                        renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
+                    } else {
+                        renderedLine = renderLineCollapsed(line: line, spans: spans, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn)
+                    }
                 }
             }
             
@@ -500,6 +635,20 @@ class EditorApp {
             }
             return (heading.content, .heading(headingStyle(heading.kind)))
         }
+        if let quote = parseQuoteLine(line) {
+            if isCursorLine {
+                return (line, .raw)
+            }
+            let render = makeQuoteRender(quote)
+            return (render.prefix + quote.content, .quote(render))
+        }
+        if let list = parseListLine(line) {
+            if isCursorLine {
+                return (line, .raw)
+            }
+            let render = makeListRender(list)
+            return (render.prefix + list.content, .list(render))
+        }
         if isCursorLine && cursorInSpan != nil {
             return (line, .raw)
         }
@@ -542,6 +691,10 @@ class EditorApp {
             return renderStyledSegment(segment: segment, style: style, cursorColumn: localCursor)
         case .collapsed(let spans):
             return renderSegmentCollapsed(segment: segment, segmentStart: segmentStart, spans: spans, cursorColumn: localCursor)
+        case .list(let render):
+            return renderListSegment(segment: segment, segmentStart: segmentStart, render: render)
+        case .quote(let render):
+            return renderQuoteSegment(segment: segment, segmentStart: segmentStart, render: render)
         }
     }
     
@@ -559,6 +712,160 @@ class EditorApp {
         case .heading3: return Theme.heading3
         default: return ""
         }
+    }
+
+    private func parseListLine(_ line: String) -> ListLine? {
+        let chars = Array(line)
+        var i = 0
+        while i < chars.count && chars[i].isWhitespace {
+            i += 1
+        }
+        guard i + 4 < chars.count else { return nil }
+        let bullet = chars[i]
+        guard bullet == "-" || bullet == "*" || bullet == "+" else { return nil }
+        guard chars[i + 1] == " " else { return nil }
+        let indent = i > 0 ? String(chars[0..<i]) : ""
+
+        if chars[i + 2] == "[", chars[i + 4] == "]" {
+            let stateChar = chars[i + 3]
+            let state: TodoState
+            switch stateChar {
+            case " ": state = .unchecked
+            case "x", "X": state = .checked
+            case "*": state = .partial
+            default: return nil
+            }
+            var j = i + 5
+            if j < chars.count && chars[j] == " " {
+                j += 1
+            }
+            let content = j < chars.count ? String(chars[j...]) : ""
+            return ListLine(indent: indent, kind: .todo(state), content: content)
+        }
+
+        let j = i + 2
+        let content = j < chars.count ? String(chars[j...]) : ""
+        return ListLine(indent: indent, kind: .bullet, content: content)
+    }
+
+    private func makeListRender(_ list: ListLine) -> ListRender {
+        let prefix = listPrefix(for: list)
+        let prefixStyle = listPrefixStyle(for: list.kind)
+        let contentSpans = MarkdownLineParser.parse(list.content)
+        return ListRender(prefix: prefix, prefixStyle: prefixStyle, contentSpans: contentSpans)
+    }
+
+    private func listPrefix(for list: ListLine) -> String {
+        let marker: String
+        switch list.kind {
+        case .bullet:
+            marker = "▪"
+        case .todo(let state):
+            switch state {
+            case .unchecked: marker = "□"
+            case .checked: marker = "■"
+            case .partial: marker = "▣"
+            }
+        }
+        return list.indent + marker + " "
+    }
+
+    private func listPrefixStyle(for kind: ListLineKind) -> String {
+        switch kind {
+        case .bullet:
+            return Theme.textMuted
+        case .todo(let state):
+            switch state {
+            case .unchecked: return Theme.textMuted
+            case .checked: return Theme.textPrimary
+            case .partial: return Theme.textSecondary
+            }
+        }
+    }
+
+    private func renderListLine(_ list: ListLine) -> String {
+        let render = makeListRender(list)
+        let styledPrefix = "\(render.prefixStyle)\(render.prefix)\(Theme.reset)"
+        let renderedContent = renderLineCollapsed(line: list.content, spans: render.contentSpans, isCursorLine: false, cursorColumn: 0)
+        return styledPrefix + renderedContent
+    }
+
+    private func renderListSegment(segment: String, segmentStart: Int, render: ListRender) -> String {
+        let prefixLen = render.prefix.count
+        let segmentChars = Array(segment)
+        let segmentEnd = segmentStart + segmentChars.count
+        var result = ""
+
+        if segmentStart < prefixLen {
+            let prefixCount = min(prefixLen - segmentStart, segmentChars.count)
+            if prefixCount > 0 {
+                let prefixPart = String(segmentChars[0..<prefixCount])
+                result += "\(render.prefixStyle)\(prefixPart)\(Theme.reset)"
+            }
+        }
+
+        if segmentEnd > prefixLen {
+            let contentStartIndex = max(0, prefixLen - segmentStart)
+            let contentSegment = String(segmentChars[contentStartIndex...])
+            let contentSegmentStart = max(0, segmentStart - prefixLen)
+            result += renderSegmentCollapsed(segment: contentSegment, segmentStart: contentSegmentStart, spans: render.contentSpans, cursorColumn: -1)
+        }
+
+        return result
+    }
+
+    private func parseQuoteLine(_ line: String) -> QuoteLine? {
+        let chars = Array(line)
+        var i = 0
+        while i < chars.count && chars[i].isWhitespace {
+            i += 1
+        }
+        guard i < chars.count, chars[i] == ">" else { return nil }
+        var j = i + 1
+        if j < chars.count && chars[j] == " " {
+            j += 1
+        }
+        let indent = i > 0 ? String(chars[0..<i]) : ""
+        let content = j < chars.count ? String(chars[j...]) : ""
+        return QuoteLine(indent: indent, content: content)
+    }
+
+    private func makeQuoteRender(_ quote: QuoteLine) -> QuoteRender {
+        let prefix = quote.indent + "| "
+        let prefixStyle = Theme.textMuted
+        let contentSpans = MarkdownLineParser.parse(quote.content)
+        return QuoteRender(prefix: prefix, prefixStyle: prefixStyle, contentSpans: contentSpans)
+    }
+
+    private func renderQuoteLine(_ quote: QuoteLine) -> String {
+        let render = makeQuoteRender(quote)
+        let styledPrefix = "\(render.prefixStyle)\(render.prefix)\(Theme.reset)"
+        let renderedContent = renderLineCollapsed(line: quote.content, spans: render.contentSpans, isCursorLine: false, cursorColumn: 0)
+        return styledPrefix + renderedContent
+    }
+
+    private func renderQuoteSegment(segment: String, segmentStart: Int, render: QuoteRender) -> String {
+        let prefixLen = render.prefix.count
+        let segmentChars = Array(segment)
+        let segmentEnd = segmentStart + segmentChars.count
+        var result = ""
+
+        if segmentStart < prefixLen {
+            let prefixCount = min(prefixLen - segmentStart, segmentChars.count)
+            if prefixCount > 0 {
+                let prefixPart = String(segmentChars[0..<prefixCount])
+                result += "\(render.prefixStyle)\(prefixPart)\(Theme.reset)"
+            }
+        }
+
+        if segmentEnd > prefixLen {
+            let contentStartIndex = max(0, prefixLen - segmentStart)
+            let contentSegment = String(segmentChars[contentStartIndex...])
+            let contentSegmentStart = max(0, segmentStart - prefixLen)
+            result += renderSegmentCollapsed(segment: contentSegment, segmentStart: contentSegmentStart, spans: render.contentSpans, cursorColumn: -1)
+        }
+
+        return result
     }
     
     private func renderStyledSegment(segment: String, style: String, cursorColumn: Int) -> String {
@@ -1035,19 +1342,22 @@ class EditorApp {
         if state.showSavedIndicator {
             leftParts.append("Saved")
         } else if state.isDirty {
-            leftParts.append("[+]")
+            leftParts.append("\(Theme.accent)◉\(Theme.statusBarText)")
         }
         let left = leftParts.joined(separator: " ")
         
+        let leftVisibleLen = state.isDirty && !state.showSavedIndicator ? leftParts.reduce(0) { $0 + ($1.contains("◉") ? 1 : $1.count) } + leftParts.count - 1 : left.count
         let right = "\(doc.wordCount) words | Ln \(doc.cursorLine + 1), Col \(doc.cursorColumn + 1)"
-        let padding = width - left.count - right.count
+        let contentWidth = width - 1
+        let padding = contentWidth - leftVisibleLen - right.count
         let spaces = String(repeating: " ", count: max(0, padding))
-        return "\(Theme.statusBarBg)\(Theme.statusBarText)\(left)\(spaces)\(right)\(Theme.reset)"
+        return "\(Theme.accent)▌\(Theme.statusBarBg)\(Theme.statusBarText)\(left)\(spaces)\(right)\(Theme.reset)"
     }
     
     private func renderHelpBar(width: Int) -> String {
         let shortcuts: [(key: String, desc: String)] = [
-            ("^H", "help"),
+            ("^/", "help"),
+            ("^P", "commands"),
             ("^Q", "quit"),
             ("^S", "save"),
             ("^R", "raw"),
@@ -1064,6 +1374,28 @@ class EditorApp {
         
         let content = parts.joined(separator: "  ")
         return content
+    }
+    
+    private func extractBracketedPaste(_ input: String) -> String? {
+        let pasteStart = "\u{1B}[200~"
+        let pasteEnd = "\u{1B}[201~"
+        
+        guard let startRange = input.range(of: pasteStart),
+              let endRange = input.range(of: pasteEnd) else {
+            return nil
+        }
+        
+        return String(input[startRange.upperBound..<endRange.lowerBound])
+    }
+    
+    private func handlePaste(_ content: String) {
+        if let modal = llmModal, modal.isVisible {
+            for char in content {
+                modal.handleCharacter(char)
+            }
+        } else {
+            state.pasteText(content)
+        }
     }
     
     private func quit() {
