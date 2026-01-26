@@ -23,6 +23,11 @@ class EditorState: ObservableObject {
     @Published var showSavedIndicator: Bool = false
     @Published var scrollOffset: Int = 0
     @Published var scrollX: Int = 0
+
+    @Published var llmProvider: LLMProvider = .lmStudio
+    private(set) var openAIAccessToken: String? = nil
+    private(set) var openAIRefreshToken: String? = nil
+    private(set) var openAIExpiresAt: Double? = nil
     
     private var clipboard: String = ""
     private var savedTimer: DispatchWorkItem?
@@ -43,6 +48,10 @@ class EditorState: ObservableObject {
         self.showHelp = config.showHelp
         self.wordWrap = config.wordWrap
         self.viewMode = config.renderMarkdown ? .normal : .raw
+        self.llmProvider = config.llmProvider
+        self.openAIAccessToken = config.openAIAccessToken
+        self.openAIRefreshToken = config.openAIRefreshToken
+        self.openAIExpiresAt = config.openAIExpiresAt
         
         loadFile()
     }
@@ -157,7 +166,28 @@ class EditorState: ObservableObject {
         config.showHelp = showHelp
         config.wordWrap = wordWrap
         config.renderMarkdown = viewMode == .normal
+        config.llmProvider = llmProvider
+        config.openAIAccessToken = openAIAccessToken
+        config.openAIRefreshToken = openAIRefreshToken
+        config.openAIExpiresAt = openAIExpiresAt
         config.save()
+    }
+
+    var openAIIsSignedIn: Bool {
+        guard let token = openAIAccessToken else { return false }
+        return !token.isEmpty
+    }
+
+    func setLLMProvider(_ provider: LLMProvider) {
+        llmProvider = provider
+        saveConfig()
+    }
+
+    func setOpenAITokens(accessToken: String, refreshToken: String?, expiresAt: Double?) {
+        openAIAccessToken = accessToken
+        openAIRefreshToken = refreshToken
+        openAIExpiresAt = expiresAt
+        saveConfig()
     }
     
     func handleCharacter(_ char: Character) {
@@ -189,6 +219,17 @@ class EditorState: ObservableObject {
         }
     }
     
+    func deleteWordBackward() {
+        saveSnapshot()
+        if document.hasSelection {
+            document.deleteSelection()
+            isDirty = true
+        } else {
+            document.deleteWordBackward()
+            isDirty = true
+        }
+    }
+    
     func deleteSelection() {
         if document.hasSelection {
             saveSnapshot()
@@ -214,11 +255,16 @@ class EditorState: ObservableObject {
     
     func paste() {
         guard !clipboard.isEmpty else { return }
+        pasteText(clipboard)
+    }
+    
+    func pasteText(_ text: String) {
+        guard !text.isEmpty else { return }
         saveSnapshot()
         if document.hasSelection {
             document.deleteSelection()
         }
-        for char in clipboard {
+        for char in text {
             if char == "\n" {
                 document.insertNewline()
             } else {

@@ -10,6 +10,8 @@ enum Key {
     static let ctrlU: Character = "\u{15}"
     static let ctrlG: Character = "\u{07}"
     static let ctrlW: Character = "\u{17}"
+    static let ctrlSlash: Character = "\u{1F}"
+    static let ctrlP: Character = "\u{10}"
     static let enter: Character = "\r"
     static let backspace: Character = "\u{7f}"
     static let tab: Character = "\t"

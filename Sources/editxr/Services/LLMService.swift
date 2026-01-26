@@ -78,10 +78,18 @@ struct LLMResult {
 /// Service for communicating with LM Studio via OpenAI-compatible API
 class LLMService {
     var config: LLMConfig
+    var provider: LLMProvider = .lmStudio
+    var openAIAccessToken: String? = nil
+
     private var currentTask: URLSessionDataTask?
     
     init(config: LLMConfig = LLMConfig()) {
         self.config = config
+    }
+
+    func setProvider(_ provider: LLMProvider, openAIAccessToken: String?) {
+        self.provider = provider
+        self.openAIAccessToken = openAIAccessToken
     }
     
     /// Cancel any ongoing request
@@ -92,9 +100,21 @@ class LLMService {
     
     /// Check if LM Studio is reachable
     func checkConnection(completion: @escaping (Bool) -> Void) {
-        let url = URL(string: "\(config.baseURL)/v1/models")!
+        let base: String
+        switch provider {
+        case .lmStudio:
+            base = config.baseURL
+        case .openaiOAuth:
+            base = "https://api.openai.com"
+        }
+
+        let url = URL(string: "\(base)/v1/models")!
         var request = URLRequest(url: url)
         request.timeoutInterval = 5
+
+        if provider == .openaiOAuth, let token = openAIAccessToken, !token.isEmpty {
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         
         URLSession.shared.dataTask(with: request) { data, response, error in
             if let httpResponse = response as? HTTPURLResponse {
@@ -112,11 +132,30 @@ class LLMService {
         systemPrompt: String? = nil,
         completion: @escaping (Result<LLMResult, LLMError>) -> Void
     ) {
-        let url = URL(string: "\(config.baseURL)/v1/chat/completions")!
+        let base: String
+        let model: String
+        switch provider {
+        case .lmStudio:
+            base = config.baseURL
+            model = config.model
+        case .openaiOAuth:
+            base = "https://api.openai.com"
+            model = ProcessInfo.processInfo.environment["OPENAI_MODEL"] ?? "gpt-4o-mini"
+        }
+
+        let url = URL(string: "\(base)/v1/chat/completions")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 60
+
+        if provider == .openaiOAuth {
+            guard let token = openAIAccessToken, !token.isEmpty else {
+                completion(.failure(.connectionFailed("OpenAI OAuth not signed in")))
+                return
+            }
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         
         var messages: [LLMChatMessage] = []
         
@@ -130,7 +169,7 @@ class LLMService {
         messages.append(LLMChatMessage(role: "user", content: userContent))
         
         let body = LLMChatRequest(
-            model: config.model,
+            model: model,
             messages: messages,
             temperature: config.temperature,
             stream: false
@@ -198,11 +237,30 @@ class LLMService {
         onChunk: @escaping (String) -> Void,
         onComplete: @escaping (Result<Void, LLMError>) -> Void
     ) {
-        let url = URL(string: "\(config.baseURL)/v1/chat/completions")!
+        let base: String
+        let model: String
+        switch provider {
+        case .lmStudio:
+            base = config.baseURL
+            model = config.model
+        case .openaiOAuth:
+            base = "https://api.openai.com"
+            model = ProcessInfo.processInfo.environment["OPENAI_MODEL"] ?? "gpt-4o-mini"
+        }
+
+        let url = URL(string: "\(base)/v1/chat/completions")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 120
+
+        if provider == .openaiOAuth {
+            guard let token = openAIAccessToken, !token.isEmpty else {
+                onComplete(.failure(.connectionFailed("OpenAI OAuth not signed in")))
+                return
+            }
+            request.setValue("Bearer \(token)", forHTTPHeaderField: "Authorization")
+        }
         
         var messages: [LLMChatMessage] = []
         
@@ -216,7 +274,7 @@ class LLMService {
         messages.append(LLMChatMessage(role: "user", content: userContent))
         
         let body = LLMChatRequest(
-            model: config.model,
+            model: model,
             messages: messages,
             temperature: config.temperature,
             stream: true

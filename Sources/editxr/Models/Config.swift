@@ -4,6 +4,11 @@ struct Config: Codable {
     var showHelp: Bool = true
     var wordWrap: Bool = true
     var renderMarkdown: Bool = true
+
+    var llmProvider: LLMProvider = .lmStudio
+    var openAIAccessToken: String? = nil
+    var openAIRefreshToken: String? = nil
+    var openAIExpiresAt: Double? = nil
     
     static let configPath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path

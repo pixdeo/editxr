@@ -256,6 +256,44 @@ struct Document {
         ensureTrailingEmptyLine()
     }
     
+    mutating func deleteWordBackward() {
+        guard cursorLine < lines.count else { return }
+        
+        if cursorColumn == 0 {
+            if cursorLine > 0 {
+                let currentLine = lines.remove(at: cursorLine)
+                cursorLine -= 1
+                cursorColumn = lines[cursorLine].count
+                lines[cursorLine] += currentLine
+            }
+            ensureTrailingEmptyLine()
+            return
+        }
+        
+        var line = lines[cursorLine]
+        let chars = Array(line)
+        var pos = cursorColumn
+        
+        while pos > 0 && chars[pos - 1].isWhitespace {
+            pos -= 1
+        }
+        
+        while pos > 0 && (chars[pos - 1].isLetter || chars[pos - 1].isNumber) {
+            pos -= 1
+        }
+        
+        if pos == cursorColumn {
+            pos = max(0, pos - 1)
+        }
+        
+        let startIndex = line.index(line.startIndex, offsetBy: pos)
+        let endIndex = line.index(line.startIndex, offsetBy: cursorColumn)
+        line.removeSubrange(startIndex..<endIndex)
+        lines[cursorLine] = line
+        cursorColumn = pos
+        ensureTrailingEmptyLine()
+    }
+    
     mutating func moveUp() {
         if cursorLine > 0 {
             cursorLine -= 1

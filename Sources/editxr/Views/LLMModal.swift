@@ -106,7 +106,7 @@ class LLMModal {
     }
     
     private func accentBar() -> String {
-        "\(Theme.accent)│\(Theme.reset)"
+        "\(Theme.accent)▌\(Theme.statusBarBg)\(Theme.statusBarText)"
     }
     
     func render(width: Int) -> [String] {
@@ -114,42 +114,54 @@ class LLMModal {
         
         let bar = accentBar()
         let contentWidth = width - 1
+        let maxContentLines = 6
         
         var lines: [String] = []
         
         switch state {
         case .inputting:
-            let cursor = "\(Theme.inverse) \(Theme.reset)"
+            let cursor = "\(Theme.inverse) \(Theme.reset)\(Theme.statusBarBg)\(Theme.statusBarText)"
             let text = inputBuffer + cursor
             let textLen = inputBuffer.count + 1
             let padding = max(0, contentWidth - textLen)
-            lines.append("\(bar)\(text)\(String(repeating: " ", count: padding))")
+            lines.append("\(bar)\(text)\(String(repeating: " ", count: padding))\(Theme.reset)")
             
         case .processing:
             let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
             let idx = Int(Date().timeIntervalSince1970 * 10) % spinner.count
             let text = "\(spinner[idx]) Processing..."
             let padding = max(0, contentWidth - text.count)
-            lines.append("\(bar)\(Theme.textMuted)\(text)\(Theme.reset)\(String(repeating: " ", count: padding))")
+            lines.append("\(bar)\(text)\(String(repeating: " ", count: padding))\(Theme.reset)")
             
-        case .streaming(let partial):
-            let displayText = truncateToWidth(partial.replacingOccurrences(of: "\n", with: " "), width: contentWidth)
-            let visLen = visibleLength(displayText)
-            let padding = max(0, contentWidth - visLen)
-            lines.append("\(bar)\(displayText)\(String(repeating: " ", count: padding))")
+        case .streaming:
+            let contentLines = wrapContent(streamedContent, width: contentWidth)
+            let displayLines = contentLines.suffix(maxContentLines)
+            for line in displayLines {
+                let padding = max(0, contentWidth - line.count)
+                lines.append("\(bar)\(line)\(String(repeating: " ", count: padding))\(Theme.reset)")
+            }
+            if lines.isEmpty {
+                let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+                let idx = Int(Date().timeIntervalSince1970 * 10) % spinner.count
+                let text = "\(spinner[idx]) Thinking..."
+                let padding = max(0, contentWidth - text.count)
+                lines.append("\(bar)\(text)\(String(repeating: " ", count: padding))\(Theme.reset)")
+            }
             
         case .result(let text):
-            let displayText = truncateToWidth(text.replacingOccurrences(of: "\n", with: " "), width: contentWidth)
-            let visLen = visibleLength(displayText)
-            let padding = max(0, contentWidth - visLen)
-            lines.append("\(bar)\(displayText)\(String(repeating: " ", count: padding))")
+            let contentLines = wrapContent(text, width: contentWidth)
+            let displayLines = contentLines.suffix(maxContentLines)
+            for line in displayLines {
+                let padding = max(0, contentWidth - line.count)
+                lines.append("\(bar)\(line)\(String(repeating: " ", count: padding))\(Theme.reset)")
+            }
             
         case .error(let message):
             let text = "⚠ \(message)"
             let displayText = truncateToWidth(text, width: contentWidth)
             let visLen = visibleLength(displayText)
             let padding = max(0, contentWidth - visLen)
-            lines.append("\(bar)\(displayText)\(String(repeating: " ", count: padding))")
+            lines.append("\(bar)\(displayText)\(String(repeating: " ", count: padding))\(Theme.reset)")
             
         case .hidden:
             return []
@@ -160,26 +172,56 @@ class LLMModal {
         return lines
     }
     
+    private func wrapContent(_ content: String, width: Int) -> [String] {
+        guard width > 0 else { return [] }
+        var result: [String] = []
+        
+        for line in content.components(separatedBy: "\n") {
+            if line.isEmpty {
+                result.append("")
+                continue
+            }
+            var remaining = line
+            while !remaining.isEmpty {
+                if remaining.count <= width {
+                    result.append(remaining)
+                    break
+                }
+                let chunk = String(remaining.prefix(width))
+                if let lastSpace = chunk.lastIndex(of: " "), lastSpace > chunk.startIndex {
+                    let breakPoint = chunk.distance(from: chunk.startIndex, to: lastSpace)
+                    result.append(String(remaining.prefix(breakPoint)))
+                    remaining = String(remaining.dropFirst(breakPoint + 1))
+                } else {
+                    result.append(chunk)
+                    remaining = String(remaining.dropFirst(width))
+                }
+            }
+        }
+        
+        return result
+    }
+    
     private func renderHintsLine(width: Int) -> String {
         let bar = accentBar()
         let contentWidth = width - 1
         let hints: String
         switch state {
         case .inputting:
-            hints = "\(Theme.textMuted)Enter\(Theme.reset) send  \(Theme.textMuted)Esc\(Theme.reset) cancel"
+            hints = "Enter send  Esc cancel"
         case .processing, .streaming:
-            hints = "\(Theme.textMuted)Esc\(Theme.reset) cancel"
+            hints = "Esc cancel"
         case .result:
-            hints = "\(Theme.textMuted)Tab\(Theme.reset) accept  \(Theme.textMuted)Esc\(Theme.reset) cancel"
+            hints = "Tab accept  Esc cancel"
         case .error:
-            hints = "\(Theme.textMuted)Esc\(Theme.reset) dismiss"
+            hints = "Esc dismiss"
         case .hidden:
             hints = ""
         }
         
-        let hintsLen = visibleLength(hints)
+        let hintsLen = hints.count
         let padding = max(0, contentWidth - hintsLen)
-        return "\(bar)\(hints)\(String(repeating: " ", count: padding))"
+        return "\(bar)\(hints)\(String(repeating: " ", count: padding))\(Theme.reset)"
     }
     
     private func submit() {
