@@ -1304,7 +1304,7 @@ class EditorApp {
     private func listPrefixStyle(for kind: ListLineKind) -> String {
         switch kind {
         case .bullet:
-            return Theme.textMuted
+            return Theme.accent
         case .todo(let state):
             switch state {
             case .unchecked: return Theme.textMuted
