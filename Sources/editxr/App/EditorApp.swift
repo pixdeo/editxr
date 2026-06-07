@@ -83,6 +83,14 @@ class EditorApp {
             PaletteCommand(title: "Toggle help bar", shortcut: "^/") { [weak self] in self?.state.toggleHelp() },
             PaletteCommand(title: "Toggle scroll past end", shortcut: "") { [weak self] in self?.state.toggleScrollPastEnd() },
             PaletteCommand(title: "Toggle full table borders", shortcut: "") { [weak self] in self?.state.toggleFullTable() },
+        ]
+        for theme in ThemeName.allCases {
+            let active = state.themeName == theme
+            cmds.append(PaletteCommand(title: "Theme: \(theme.displayName)", shortcut: active ? "current" : "") { [weak self] in
+                self?.state.setTheme(theme)
+            })
+        }
+        cmds += [
             PaletteCommand(title: "Undo", shortcut: "^U") { [weak self] in self?.state.undo() },
             PaletteCommand(title: "Redo", shortcut: "^G") { [weak self] in self?.state.redo() },
             PaletteCommand(title: "Go to top", shortcut: "Home") { [weak self] in self?.state.goToTop() },

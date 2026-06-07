@@ -76,24 +76,112 @@ enum ColorMode {
     }
 }
 
+// SGR helpers: truecolor foreground / background escape sequences.
+private func fg(_ r: Int, _ g: Int, _ b: Int) -> String { "\u{1B}[38;2;\(r);\(g);\(b)m" }
+private func bg(_ r: Int, _ g: Int, _ b: Int) -> String { "\u{1B}[48;2;\(r);\(g);\(b)m" }
+
+/// Selectable colour schemes. Kept deliberately small and minimalist —
+/// each one is mode-aware (light/dark) rather than a fixed set of colours.
+enum ThemeName: String, CaseIterable, Codable {
+    case system   // neutral grayscale (default)
+    case claude   // warm, terracotta accent
+    case mono     // pure monochrome, no chroma
+
+    var displayName: String {
+        switch self {
+        case .system: return "System"
+        case .claude: return "Claude"
+        case .mono:   return "Mono"
+        }
+    }
+}
+
+/// A resolved set of colour tokens for one theme + mode combination.
+struct ThemePalette {
+    let textPrimary, textSecondary, textMuted, accent: String
+    let statusBarBg, statusBarText, shadowStyle: String
+    let selectionBg, selectionFg, gutter, string: String
+
+    static func make(_ name: ThemeName, _ mode: ColorMode) -> ThemePalette {
+        switch (name, mode) {
+        case (.system, .dark):
+            return ThemePalette(
+                textPrimary: fg(229, 229, 229), textSecondary: fg(163, 163, 163),
+                textMuted: fg(115, 115, 115), accent: fg(220, 220, 220),
+                statusBarBg: bg(38, 38, 38), statusBarText: fg(163, 163, 163),
+                shadowStyle: bg(0, 0, 0) + fg(78, 78, 78),
+                selectionBg: bg(55, 90, 99), selectionFg: fg(229, 229, 229),
+                gutter: fg(115, 115, 115), string: fg(102, 102, 102))
+        case (.system, .light):
+            return ThemePalette(
+                textPrimary: fg(26, 26, 26), textSecondary: fg(102, 102, 102),
+                textMuted: fg(138, 138, 138), accent: fg(0, 0, 0),
+                statusBarBg: bg(240, 240, 240), statusBarText: fg(100, 100, 100),
+                shadowStyle: bg(200, 200, 200) + fg(140, 140, 140),
+                selectionBg: bg(227, 248, 248), selectionFg: fg(26, 26, 26),
+                gutter: fg(138, 138, 138), string: fg(102, 102, 102))
+
+        case (.claude, .dark):
+            return ThemePalette(
+                textPrimary: fg(235, 229, 219), textSecondary: fg(168, 160, 148),
+                textMuted: fg(122, 115, 105), accent: fg(204, 120, 92),
+                statusBarBg: bg(45, 42, 38), statusBarText: fg(168, 160, 148),
+                shadowStyle: bg(0, 0, 0) + fg(70, 66, 60),
+                selectionBg: bg(74, 66, 54), selectionFg: fg(235, 229, 219),
+                gutter: fg(110, 104, 95), string: fg(150, 140, 120))
+        case (.claude, .light):
+            return ThemePalette(
+                textPrimary: fg(41, 37, 33), textSecondary: fg(105, 98, 88),
+                textMuted: fg(150, 142, 130), accent: fg(181, 95, 66),
+                statusBarBg: bg(240, 236, 228), statusBarText: fg(105, 98, 88),
+                shadowStyle: bg(205, 200, 190) + fg(150, 142, 130),
+                selectionBg: bg(235, 222, 205), selectionFg: fg(41, 37, 33),
+                gutter: fg(150, 142, 130), string: fg(130, 120, 105))
+
+        case (.mono, .dark):
+            return ThemePalette(
+                textPrimary: fg(224, 224, 224), textSecondary: fg(160, 160, 160),
+                textMuted: fg(112, 112, 112), accent: fg(255, 255, 255),
+                statusBarBg: bg(32, 32, 32), statusBarText: fg(160, 160, 160),
+                shadowStyle: bg(0, 0, 0) + fg(72, 72, 72),
+                selectionBg: bg(64, 64, 64), selectionFg: fg(240, 240, 240),
+                gutter: fg(112, 112, 112), string: fg(144, 144, 144))
+        case (.mono, .light):
+            return ThemePalette(
+                textPrimary: fg(20, 20, 20), textSecondary: fg(96, 96, 96),
+                textMuted: fg(140, 140, 140), accent: fg(0, 0, 0),
+                statusBarBg: bg(238, 238, 238), statusBarText: fg(96, 96, 96),
+                shadowStyle: bg(204, 204, 204) + fg(140, 140, 140),
+                selectionBg: bg(218, 218, 218), selectionFg: fg(20, 20, 20),
+                gutter: fg(140, 140, 140), string: fg(120, 120, 120))
+        }
+    }
+}
+
 struct Theme {
-    static var mode: ColorMode = .detect()
+    static var mode: ColorMode = .detect() { didSet { refresh() } }
+    static var name: ThemeName = .system { didSet { refresh() } }
 
-    static var textPrimary: String { mode == .dark ? "\u{1B}[38;2;229;229;229m" : "\u{1B}[38;2;26;26;26m" }
-    static var textSecondary: String { mode == .dark ? "\u{1B}[38;2;163;163;163m" : "\u{1B}[38;2;102;102;102m" }
-    static var textMuted: String { mode == .dark ? "\u{1B}[38;2;115;115;115m" : "\u{1B}[38;2;138;138;138m" }
-    static var accent: String { mode == .dark ? "\u{1B}[38;2;220;220;220m" : "\u{1B}[38;2;0;0;0m" }
+    /// Active palette, cached so render-loop token access stays allocation-free.
+    private(set) static var current: ThemePalette = .make(.system, Theme.mode)
+    private static func refresh() { current = .make(name, mode) }
 
-    static var statusBarBg: String { mode == .dark ? "\u{1B}[48;2;38;38;38m" : "\u{1B}[48;2;240;240;240m" }
-    static var statusBarText: String { mode == .dark ? "\u{1B}[38;2;163;163;163m" : "\u{1B}[38;2;100;100;100m" }
+    static var textPrimary: String { current.textPrimary }
+    static var textSecondary: String { current.textSecondary }
+    static var textMuted: String { current.textMuted }
+    static var accent: String { current.accent }
+
+    static var statusBarBg: String { current.statusBarBg }
+    static var statusBarText: String { current.statusBarText }
     // Translucent drop-shadow (Norton Commander style): underlying glyphs stay
-    // visible but dimmed, over a dark background.
-    static var shadowStyle: String { mode == .dark ? "\u{1B}[48;2;0;0;0m\u{1B}[38;2;78;78;78m" : "\u{1B}[48;2;200;200;200m\u{1B}[38;2;140;140;140m" }
+    // visible but dimmed, over a darkened background.
+    static var shadowStyle: String { current.shadowStyle }
 
-    static var selectionBg: String { mode == .dark ? "\u{1B}[48;2;55;90;99m" : "\u{1B}[48;2;227;248;248m" }
-    static var selectionFg: String { mode == .dark ? "\u{1B}[38;2;229;229;229m" : "\u{1B}[38;2;26;26;26m" }
+    static var selectionBg: String { current.selectionBg }
+    static var selectionFg: String { current.selectionFg }
 
-    static var gutter: String { mode == .dark ? "\u{1B}[38;2;115;115;115m" : "\u{1B}[38;2;138;138;138m" }
+    static var gutter: String { current.gutter }
+    static var string: String { current.string }
 
     static var heading1: String { "\u{1B}[1m\(accent)" }
     static var heading2: String { "\u{1B}[1m\(textPrimary)" }
@@ -105,5 +193,4 @@ struct Theme {
     static let italic = "\u{1B}[3m"
     static let inverse = "\u{1B}[7m"
     static let underline = "\u{1B}[4m"
-    static let string = "\u{1B}[38;2;102;102;102m"
 }

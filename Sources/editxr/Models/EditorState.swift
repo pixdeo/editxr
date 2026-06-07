@@ -21,6 +21,7 @@ class EditorState: ObservableObject {
     @Published var wordWrap: Bool = true
     @Published var scrollPastEnd: Bool = true
     @Published var fullTable: Bool = true
+    @Published var themeName: ThemeName = .system
     @Published var isDirty: Bool = false
     @Published var showSavedIndicator: Bool = false
     @Published var scrollOffset: Int = 0
@@ -51,6 +52,8 @@ class EditorState: ObservableObject {
         self.wordWrap = config.wordWrap
         self.scrollPastEnd = config.scrollPastEnd ?? true
         self.fullTable = config.fullTable ?? true
+        self.themeName = config.theme ?? .system
+        Theme.name = self.themeName
         self.viewMode = config.renderMarkdown ? .normal : .raw
         self.llmProvider = config.llmProvider
         self.openAIAccessToken = config.openAIAccessToken
@@ -174,6 +177,12 @@ class EditorState: ObservableObject {
         fullTable.toggle()
         saveConfig()
     }
+
+    func setTheme(_ name: ThemeName) {
+        themeName = name
+        Theme.name = name
+        saveConfig()
+    }
     
     private func saveConfig() {
         var config = Config.load()
@@ -181,6 +190,7 @@ class EditorState: ObservableObject {
         config.wordWrap = wordWrap
         config.scrollPastEnd = scrollPastEnd
         config.fullTable = fullTable
+        config.theme = themeName
         config.renderMarkdown = viewMode == .normal
         config.llmProvider = llmProvider
         config.openAIAccessToken = openAIAccessToken
