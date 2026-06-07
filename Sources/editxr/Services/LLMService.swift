@@ -86,6 +86,15 @@ class LLMService {
     private var currentTask: URLSessionDataTask?
     private var mockCancelled = false
 
+    /// Default instruction for the section-edit flow: replace the section with
+    /// the model's output, so it must return the complete updated section only.
+    static let editSystemPrompt = """
+    You are editing one section of a Markdown document. Apply the user's \
+    instruction and return the COMPLETE updated section as Markdown. Output \
+    ONLY the Markdown for the section — no surrounding code fences, no \
+    commentary, no explanations, no reasoning, no "Here is" prefixes.
+    """
+
     init(config: LLMConfig = LLMConfig()) {
         self.config = config
     }
@@ -202,12 +211,12 @@ class LLMService {
 
         var messages: [LLMChatMessage] = []
 
-        let system = systemPrompt ?? "You are a writing assistant. Output ONLY the requested text. No explanations, no reasoning, no analysis, no numbered steps. Just the direct result."
+        let system = systemPrompt ?? LLMService.editSystemPrompt
         messages.append(LLMChatMessage(role: "system", content: system))
 
         var userContent = prompt
         if !context.isEmpty {
-            userContent = "Context:\n\"\"\"\n\(context)\n\"\"\"\n\nTask: \(prompt)"
+            userContent = "Section to edit:\n\"\"\"\n\(context)\n\"\"\"\n\nInstruction: \(prompt)"
         }
         messages.append(LLMChatMessage(role: "user", content: userContent))
 
@@ -302,12 +311,12 @@ class LLMService {
 
         var messages: [LLMChatMessage] = []
 
-        let system = systemPrompt ?? "You are a writing assistant. Output ONLY the requested text. No explanations, no reasoning, no analysis, no numbered steps. Just the direct result."
+        let system = systemPrompt ?? LLMService.editSystemPrompt
         messages.append(LLMChatMessage(role: "system", content: system))
 
         var userContent = prompt
         if !context.isEmpty {
-            userContent = "Context:\n\"\"\"\n\(context)\n\"\"\"\n\nTask: \(prompt)"
+            userContent = "Section to edit:\n\"\"\"\n\(context)\n\"\"\"\n\nInstruction: \(prompt)"
         }
         messages.append(LLMChatMessage(role: "user", content: userContent))
 
@@ -361,35 +370,37 @@ class LLMService {
 private class StreamDelegate: NSObject, URLSessionDataDelegate {
     private let onChunk: (String) -> Void
     private let onComplete: (Result<Void, LLMError>) -> Void
-    private var buffer = ""
-    
+    // Buffer raw bytes (not String) so a multi-byte UTF-8 char split across two
+    // network packets isn't lost — we only decode complete lines.
+    private var buffer = Data()
+
     init(onChunk: @escaping (String) -> Void, onComplete: @escaping (Result<Void, LLMError>) -> Void) {
         self.onChunk = onChunk
         self.onComplete = onComplete
     }
-    
+
     func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
-        guard let text = String(data: data, encoding: .utf8) else { return }
-        buffer += text
-        
-        while let newlineRange = buffer.range(of: "\n") {
-            let line = String(buffer[..<newlineRange.lowerBound])
-            buffer = String(buffer[newlineRange.upperBound...])
-            
+        buffer.append(data)
+
+        while let nl = buffer.firstIndex(of: 0x0A) {           // 0x0A == "\n"
+            let lineData = buffer[buffer.startIndex..<nl]
+            buffer = Data(buffer[buffer.index(after: nl)...])
+            guard var line = String(data: lineData, encoding: .utf8) else { continue }
+            if line.hasSuffix("\r") { line.removeLast() }       // tolerate CRLF framing
             processLine(line)
         }
     }
-    
+
     private func processLine(_ line: String) {
-        guard line.hasPrefix("data: ") else { return }
-        let json = String(line.dropFirst(6))
-        
-        if json == "[DONE]" {
+        guard line.hasPrefix("data:") else { return }          // tolerate "data:" with or without a space
+        let json = String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces)
+
+        if json == "[DONE]" || json.isEmpty {
             return
         }
-        
+
         guard let data = json.data(using: .utf8) else { return }
-        
+
         do {
             let chunk = try JSONDecoder().decode(LLMStreamChunk.self, from: data)
             if let content = chunk.choices.first?.delta.content {
