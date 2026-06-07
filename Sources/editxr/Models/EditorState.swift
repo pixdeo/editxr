@@ -373,7 +373,12 @@ class EditorState: ObservableObject {
     func beginReview(startLine: Int, endLine: Int, proposed: String) {
         guard startLine >= 0, endLine < document.lines.count, startLine <= endLine else { return }
         let original = Array(document.lines[startLine...endLine])
-        let proposedLines = proposed.components(separatedBy: "\n")
+        // Normalize line endings: models often emit CRLF (or bare CR), which
+        // would otherwise leave a stray \r in each line (shown as ^M).
+        let normalized = proposed
+            .replacingOccurrences(of: "\r\n", with: "\n")
+            .replacingOccurrences(of: "\r", with: "\n")
+        let proposedLines = normalized.components(separatedBy: "\n")
         pendingEdit = PendingEdit(
             startLine: startLine,
             endLine: endLine,
