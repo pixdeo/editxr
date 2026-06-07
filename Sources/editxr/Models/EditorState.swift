@@ -52,7 +52,7 @@ class EditorState: ObservableObject {
         self.wordWrap = config.wordWrap
         self.scrollPastEnd = config.scrollPastEnd ?? true
         self.fullTable = config.fullTable ?? true
-        self.themeName = config.theme ?? .system
+        self.themeName = config.theme.flatMap(ThemeName.init(rawValue:)) ?? .system
         Theme.name = self.themeName
         self.viewMode = config.renderMarkdown ? .normal : .raw
         self.llmProvider = config.llmProvider
@@ -61,6 +61,27 @@ class EditorState: ObservableObject {
         self.openAIExpiresAt = config.openAIExpiresAt
         
         loadFile()
+        restoreCursorPosition()
+    }
+
+    /// Restore the cursor (and scroll) saved from a previous session, clamped
+    /// to the current document so a shrunken file can't land out of bounds.
+    private func restoreCursorPosition() {
+        guard let pos = CursorStore.load(for: filePath), !document.lines.isEmpty else { return }
+        let line = max(0, min(pos.line, document.lines.count - 1))
+        let col = max(0, min(pos.column, document.lines[line].count))
+        document.cursorLine = line
+        document.cursorColumn = col
+        scrollOffset = max(0, pos.scroll)
+    }
+
+    /// Persist the current cursor position; call when leaving the editor.
+    func persistCursorPosition() {
+        let pos = CursorStore.Position(
+            line: document.cursorLine,
+            column: document.cursorColumn,
+            scroll: scrollOffset)
+        CursorStore.save(pos, for: filePath)
     }
     
     func loadFile() {
@@ -190,7 +211,7 @@ class EditorState: ObservableObject {
         config.wordWrap = wordWrap
         config.scrollPastEnd = scrollPastEnd
         config.fullTable = fullTable
-        config.theme = themeName
+        config.theme = themeName.rawValue
         config.renderMarkdown = viewMode == .normal
         config.llmProvider = llmProvider
         config.openAIAccessToken = openAIAccessToken

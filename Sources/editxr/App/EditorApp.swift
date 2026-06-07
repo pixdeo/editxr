@@ -1854,6 +1854,7 @@ class EditorApp {
     }
     
     private func quit() {
+        state.persistCursorPosition()
         showCursor()
         exitAlternateScreen()
         resetInputMode()

@@ -7,7 +7,9 @@ struct Config: Codable {
     // Optional so configs written before this field still decode.
     var scrollPastEnd: Bool? = true
     var fullTable: Bool? = true
-    var theme: ThemeName? = nil
+    // Stored as the raw string so renaming/removing a theme can't make the
+    // whole config fail to decode; unknown values just fall back to default.
+    var theme: String? = nil
 
     var llmProvider: LLMProvider = .lmStudio
     var openAIAccessToken: String? = nil

@@ -83,15 +83,17 @@ private func bg(_ r: Int, _ g: Int, _ b: Int) -> String { "\u{1B}[48;2;\(r);\(g)
 /// Selectable colour schemes. Kept deliberately small and minimalist —
 /// each one is mode-aware (light/dark) rather than a fixed set of colours.
 enum ThemeName: String, CaseIterable, Codable {
-    case system   // neutral grayscale (default)
-    case claude   // warm, terracotta accent
-    case mono     // pure monochrome, no chroma
+    case system    // neutral grayscale (default)
+    case clay      // warm, terracotta accent
+    case mono      // pure monochrome, no chroma
+    case monokai   // classic Monokai (dark-oriented)
 
     var displayName: String {
         switch self {
-        case .system: return "System"
-        case .claude: return "Claude"
-        case .mono:   return "Mono"
+        case .system:  return "System"
+        case .clay:    return "Clay"
+        case .mono:    return "Mono"
+        case .monokai: return "Monokai"
         }
     }
 }
@@ -121,7 +123,7 @@ struct ThemePalette {
                 selectionBg: bg(227, 248, 248), selectionFg: fg(26, 26, 26),
                 gutter: fg(138, 138, 138), string: fg(102, 102, 102))
 
-        case (.claude, .dark):
+        case (.clay, .dark):
             return ThemePalette(
                 textPrimary: fg(235, 229, 219), textSecondary: fg(168, 160, 148),
                 textMuted: fg(122, 115, 105), accent: fg(204, 120, 92),
@@ -129,7 +131,7 @@ struct ThemePalette {
                 shadowStyle: bg(0, 0, 0) + fg(70, 66, 60),
                 selectionBg: bg(74, 66, 54), selectionFg: fg(235, 229, 219),
                 gutter: fg(110, 104, 95), string: fg(150, 140, 120))
-        case (.claude, .light):
+        case (.clay, .light):
             return ThemePalette(
                 textPrimary: fg(41, 37, 33), textSecondary: fg(105, 98, 88),
                 textMuted: fg(150, 142, 130), accent: fg(181, 95, 66),
@@ -154,6 +156,26 @@ struct ThemePalette {
                 shadowStyle: bg(204, 204, 204) + fg(140, 140, 140),
                 selectionBg: bg(218, 218, 218), selectionFg: fg(20, 20, 20),
                 gutter: fg(140, 140, 140), string: fg(120, 120, 120))
+
+        case (.monokai, .dark):
+            // Authentic Monokai: cream text, terracotta-free magenta accent,
+            // yellow strings, comment-gray muted.
+            return ThemePalette(
+                textPrimary: fg(248, 248, 242), textSecondary: fg(170, 170, 160),
+                textMuted: fg(117, 113, 94), accent: fg(249, 38, 114),
+                statusBarBg: bg(62, 61, 50), statusBarText: fg(170, 170, 160),
+                shadowStyle: bg(0, 0, 0) + fg(60, 60, 55),
+                selectionBg: bg(73, 72, 62), selectionFg: fg(248, 248, 242),
+                gutter: fg(99, 98, 87), string: fg(230, 219, 116))
+        case (.monokai, .light):
+            // Monokai-flavoured, darkened for readability on a light terminal.
+            return ThemePalette(
+                textPrimary: fg(40, 40, 38), textSecondary: fg(95, 95, 90),
+                textMuted: fg(150, 148, 140), accent: fg(192, 16, 96),
+                statusBarBg: bg(236, 235, 228), statusBarText: fg(95, 95, 90),
+                shadowStyle: bg(205, 204, 196) + fg(150, 148, 140),
+                selectionBg: bg(228, 226, 210), selectionFg: fg(40, 40, 38),
+                gutter: fg(150, 148, 140), string: fg(150, 120, 20))
         }
     }
 }
