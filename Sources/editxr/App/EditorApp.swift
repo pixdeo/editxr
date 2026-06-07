@@ -54,7 +54,10 @@ class EditorApp {
     private var llmModal: LLMModal?
     private let openAIOAuth = OpenAIOAuth()
     private var commandPanel: CommandPanel?
-    
+    /// Whole-line range the next LLM result should review against, captured
+    /// when the modal opens (selection or current block).
+    private var reviewRange: (startLine: Int, endLine: Int)?
+
     init(state: EditorState) {
         self.state = state
         state.onSavedIndicatorChanged = { [weak self] in
@@ -64,6 +67,9 @@ class EditorApp {
         llmModal = LLMModal(llmService: llmService)
         llmModal?.onStateChanged = { [weak self] in
             self?.render()
+        }
+        llmModal?.onResultReady = { [weak self] text in
+            self?.enterReview(with: text)
         }
 
         llmService.setProvider(state.llmProvider, openAIAccessToken: state.openAIAccessToken)
@@ -224,12 +230,17 @@ class EditorApp {
             return
         }
         
+        if state.isReviewing {
+            handleReviewInput(string)
+            return
+        }
+
         if let pasteContent = extractBracketedPaste(string) {
             handlePaste(pasteContent)
             render()
             return
         }
-        
+
         var needsRender = false
         
         for char in string {
@@ -334,13 +345,6 @@ class EditorApp {
             return
         }
         
-        if char == Key.tab && modal.handleTab() {
-            if let result = modal.acceptResult() {
-                applyLLMResult(result)
-            }
-            return
-        }
-        
         if char == Key.backspace {
             modal.handleBackspace()
             return
@@ -350,22 +354,48 @@ class EditorApp {
     }
     
     private func showLLMModal() {
-        let context: String
-        if let selection = state.document.selectionRange {
-            context = state.document.textInRange(selection)
+        let doc = state.document
+        let startLine: Int, endLine: Int
+        if let selection = doc.selectionRange {
+            startLine = selection.start.line
+            endLine = selection.end.line
+        } else if let para = doc.currentParagraphRange {
+            startLine = para.start.line
+            endLine = para.end.line
         } else {
-            context = state.document.currentParagraph
+            startLine = doc.cursorLine
+            endLine = doc.cursorLine
         }
+        reviewRange = (startLine, endLine)
+        // Edits operate on whole lines (sections), so send the full lines as context.
+        let context = doc.lines[startLine...endLine].joined(separator: "\n")
         llmModal?.show(withContext: context)
     }
-    
-    private func applyLLMResult(_ result: String) {
-        if state.document.hasSelection {
-            state.replaceSelection(with: result)
-        } else {
-            state.replaceParagraph(with: result)
-        }
+
+    private func enterReview(with text: String) {
+        guard let range = reviewRange else { return }
+        reviewRange = nil
+        state.beginReview(startLine: range.startLine, endLine: range.endLine, proposed: text)
         render()
+    }
+
+    private func handleReviewInput(_ string: String) {
+        // Ignore escape sequences (arrows etc.) so a leading ESC isn't read as reject.
+        if string.first == Key.escape && string.count > 1 { return }
+        for char in string {
+            switch char {
+            case "y", "Y", Key.tab, Key.enter:
+                state.acceptPendingEdit()
+                render()
+                return
+            case "n", "N", Key.escape:
+                state.rejectPendingEdit()
+                render()
+                return
+            default:
+                break
+            }
+        }
     }
     
     private func handleArrowKey(_ key: ArrowKey) {
@@ -479,7 +509,9 @@ class EditorApp {
         
         lines.append(padToWidth(renderStatusBar(width: width), width: width))
         
-        if state.showHelp {
+        if state.isReviewing {
+            lines.append(padToWidth(renderReviewHintBar(width: width), width: width))
+        } else if state.showHelp {
             lines.append(padToWidth(renderHelpBar(width: width), width: width))
         } else {
             lines.append(padToWidth(renderHintBar(width: width), width: width))
@@ -676,7 +708,9 @@ class EditorApp {
         let doc = state.document
         let selection = doc.selectionRange
         
-        if state.wordWrap {
+        // During review use the non-wrapped path so the inline diff is simple
+        // to splice in (long diff lines clip horizontally rather than wrap).
+        if state.wordWrap && state.pendingEdit == nil {
             return renderNormalModeWrapped(width: width, height: height, gutterWidth: gutterWidth)
         }
         
@@ -689,6 +723,17 @@ class EditorApp {
         var inFrontmatter = inFrontmatterAtStart
         
         for i in startLine..<endLine {
+            // Inline LLM-edit review: emit the diff block in place of the sector.
+            if let pe = state.pendingEdit, i >= pe.startLine, i <= pe.endLine {
+                if i == pe.startLine {
+                    for dl in pe.diff {
+                        if output.count >= height { break }
+                        output.append(renderDiffLine(dl, gutterWidth: gutterWidth, width: width))
+                    }
+                }
+                continue
+            }
+
             let line = doc.lines[i]
             let isCodeDelimiter = MarkdownLineParser.isCodeBlockDelimiter(line)
             let isFmDelimiter = isFrontmatterDelimiter(line)
@@ -760,6 +805,19 @@ class EditorApp {
         }
 
         return output
+    }
+
+    private func renderDiffLine(_ dl: DiffLine, gutterWidth: Int, width: Int) -> String {
+        let color: String, text: String
+        switch dl {
+        case .same(let s): color = Theme.textMuted; text = "  \(s)"
+        case .del(let s):  color = Theme.diffDel;   text = "- \(s)"
+        case .add(let s):  color = Theme.diffAdd;   text = "+ \(s)"
+        }
+        let styled = "\(color)\(text)\(Theme.reset)"
+        let scrolled = applyHorizontalScroll(styled, scrollX: 0, width: width)
+        let gutter = String(repeating: " ", count: gutterWidth)
+        return padToWidth(gutter + scrolled, width: gutterWidth + width)
     }
 
     // MARK: - Markdown tables
@@ -1835,6 +1893,10 @@ class EditorApp {
 
     private func renderHintBar(width: Int) -> String {
         return "\(Theme.accent)ctrl+p \(Theme.textMuted)commands   \(Theme.accent)ctrl+/ \(Theme.textMuted)help\(Theme.reset)"
+    }
+
+    private func renderReviewHintBar(width: Int) -> String {
+        return "\(Theme.diffAdd)y/⇥ \(Theme.textMuted)accept   \(Theme.diffDel)n/esc \(Theme.textMuted)reject   \(Theme.textMuted)AI edit review\(Theme.reset)"
     }
 
     private func extractBracketedPaste(_ input: String) -> String? {

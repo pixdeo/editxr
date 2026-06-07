@@ -17,7 +17,10 @@ class LLMModal {
     private var contextText: String = ""
     
     var onStateChanged: (() -> Void)?
-    
+    /// Called with the final generated text on success. The modal hands off to
+    /// the inline-diff review flow instead of applying directly.
+    var onResultReady: ((String) -> Void)?
+
     init(llmService: LLMService) {
         self.llmService = llmService
     }
@@ -246,7 +249,9 @@ class LLMModal {
                 switch result {
                 case .success:
                     let finalResult = self.extractAfterThink(self.streamedContent) ?? self.streamedContent.trimmingCharacters(in: .whitespacesAndNewlines)
-                    self.state = .result(finalResult)
+                    self.hide()
+                    self.onResultReady?(finalResult)
+                    return
                 case .failure(let error):
                     if case .cancelled = error {
                         self.state = .inputting

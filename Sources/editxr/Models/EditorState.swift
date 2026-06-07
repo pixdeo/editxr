@@ -27,6 +27,7 @@ class EditorState: ObservableObject {
     @Published var showSavedIndicator: Bool = false
     @Published var scrollOffset: Int = 0
     @Published var scrollX: Int = 0
+    @Published var pendingEdit: PendingEdit? = nil
 
     @Published var llmProvider: LLMProvider = .lmStudio
     private(set) var openAIAccessToken: String? = nil
@@ -345,6 +346,42 @@ class EditorState: ObservableObject {
         document.replaceRange(range, with: text)
         isDirty = true
     }
+
+    // MARK: - LLM edit review
+
+    var isReviewing: Bool { pendingEdit != nil }
+
+    /// Enter review for the whole-line range [startLine, endLine] with the
+    /// LLM's proposed replacement. Nothing is applied yet — the diff is shown
+    /// inline until accept/reject.
+    func beginReview(startLine: Int, endLine: Int, proposed: String) {
+        guard startLine >= 0, endLine < document.lines.count, startLine <= endLine else { return }
+        let original = Array(document.lines[startLine...endLine])
+        let proposedLines = proposed.components(separatedBy: "\n")
+        pendingEdit = PendingEdit(
+            startLine: startLine,
+            endLine: endLine,
+            proposedLines: proposedLines,
+            diff: Diff.lines(original, proposedLines))
+        document.clearSelection()
+        document.cursorLine = startLine
+        document.cursorColumn = 0
+        scrollOffset = max(0, startLine - 2)
+    }
+
+    func acceptPendingEdit() {
+        guard let pe = pendingEdit, pe.endLine < document.lines.count else { pendingEdit = nil; return }
+        saveSnapshot()
+        let range = (start: CursorPosition(line: pe.startLine, column: 0),
+                     end: CursorPosition(line: pe.endLine, column: document.lines[pe.endLine].count))
+        document.replaceRange(range, with: pe.proposedLines.joined(separator: "\n"))
+        pendingEdit = nil
+        isDirty = true
+    }
+
+    func rejectPendingEdit() {
+        pendingEdit = nil
+    }
     
     func insertAtCursor(_ text: String) {
         saveSnapshot()
@@ -539,7 +576,9 @@ class EditorState: ObservableObject {
     }
     
     func adjustScroll(viewportHeight: Int, viewportWidth: Int) {
-        if wordWrap {
+        // While reviewing we render non-wrapped, so scrollOffset must be in
+        // document-line units regardless of the wordWrap setting.
+        if wordWrap && pendingEdit == nil {
             adjustScrollWrapped(viewportHeight: viewportHeight, viewportWidth: viewportWidth)
             return
         }

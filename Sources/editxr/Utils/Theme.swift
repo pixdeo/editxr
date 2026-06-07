@@ -233,6 +233,11 @@ struct Theme {
     static var gutter: String { current.gutter }
     static var string: String { current.string }
 
+    // Diff colours for inline LLM-edit review. Universal-ish muted green/red,
+    // so they read the same across palettes (only mode varies).
+    static var diffAdd: String { mode == .dark ? fg(126, 178, 109) : fg(70, 136, 58) }
+    static var diffDel: String { mode == .dark ? fg(200, 110, 110) : fg(176, 64, 64) }
+
     static var heading1: String { "\u{1B}[1m\(accent)" }
     static var heading2: String { "\u{1B}[1m\(textPrimary)" }
     static var heading3: String { "\u{1B}[1m\(textSecondary)" }
