@@ -15,6 +15,11 @@ class LLMModal {
     private(set) var inputBuffer: String = ""
     private(set) var streamedContent: String = ""
     private var contextText: String = ""
+
+    // Prompt history (oldest first), shell-style: ↑/↓ browse it while inputting.
+    private var history: [String] = []
+    private var historyIndex: Int? = nil   // nil == editing the live draft
+    private var draft: String = ""         // the live text, stashed while browsing
     
     var onStateChanged: (() -> Void)?
     /// Called with the final generated text on success. The modal hands off to
@@ -42,6 +47,8 @@ class LLMModal {
         contextText = context
         inputBuffer = ""
         streamedContent = ""
+        historyIndex = nil
+        draft = ""
         state = .inputting
         onStateChanged?()
     }
@@ -62,16 +69,45 @@ class LLMModal {
         let value = scalar.value
         if value >= 32 && value != 127 {
             inputBuffer.append(char)
+            historyIndex = nil          // editing detaches from history
             onStateChanged?()
         }
     }
-    
+
     func handleBackspace() {
         guard case .inputting = state else { return }
         if !inputBuffer.isEmpty {
             inputBuffer.removeLast()
+            historyIndex = nil
             onStateChanged?()
         }
+    }
+
+    /// ↑ — recall an older prompt (shell-style).
+    func historyPrevious() {
+        guard case .inputting = state, !history.isEmpty else { return }
+        if historyIndex == nil {
+            draft = inputBuffer
+            historyIndex = history.count - 1
+        } else {
+            historyIndex = max(0, historyIndex! - 1)
+        }
+        inputBuffer = history[historyIndex!]
+        onStateChanged?()
+    }
+
+    /// ↓ — move toward newer prompts, then back to the live draft.
+    func historyNext() {
+        guard case .inputting = state, let idx = historyIndex else { return }
+        let next = idx + 1
+        if next >= history.count {
+            historyIndex = nil
+            inputBuffer = draft
+        } else {
+            historyIndex = next
+            inputBuffer = history[next]
+        }
+        onStateChanged?()
     }
     
     func handleEnter() {
@@ -250,6 +286,11 @@ class LLMModal {
     }
     
     private func submit() {
+        if history.last != inputBuffer {        // skip consecutive duplicates
+            history.append(inputBuffer)
+        }
+        historyIndex = nil
+        draft = ""
         state = .processing
         streamedContent = ""
         onStateChanged?()

@@ -292,6 +292,17 @@ class EditorApp {
             return
         }
 
+        if let modal = llmModal, modal.isVisible {
+            if string == "\u{1B}[A" { modal.historyPrevious(); return }
+            if string == "\u{1B}[B" { modal.historyNext(); return }
+            if let pasteContent = extractBracketedPaste(string) {
+                for char in pasteContent where !char.isNewline { modal.handleCharacter(char) }
+                return
+            }
+            for char in string { handleLLMModalInput(char) }
+            return
+        }
+
         if let pasteContent = extractBracketedPaste(string) {
             handlePaste(pasteContent)
             render()
@@ -299,13 +310,8 @@ class EditorApp {
         }
 
         var needsRender = false
-        
+
         for char in string {
-            if let modal = llmModal, modal.isVisible {
-                handleLLMModalInput(char)
-                continue
-            }
-            
             if arrowKeyParser.parse(character: char) {
                 if let key = arrowKeyParser.arrowKey {
                     arrowKeyParser.arrowKey = nil
