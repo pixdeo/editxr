@@ -29,6 +29,14 @@ class LLMModal {
         if case .hidden = state { return false }
         return true
     }
+
+    /// True while a spinner is on screen, so the host can drive re-renders.
+    var isAnimating: Bool {
+        switch state {
+        case .processing, .streaming: return true
+        default: return false
+        }
+    }
     
     func show(withContext context: String) {
         contextText = context
@@ -123,12 +131,26 @@ class LLMModal {
         
         switch state {
         case .inputting:
-            let cursor = "\(Theme.inverse) \(Theme.reset)\(Theme.statusBarBg)\(Theme.statusBarText)"
-            let text = inputBuffer + cursor
-            let textLen = inputBuffer.count + 1
-            let padding = max(0, contentWidth - textLen)
-            lines.append("\(bar)\(text)\(String(repeating: " ", count: padding))\(Theme.reset)")
-            
+            // Header label
+            let label = "✶ Ask AI"
+            let labelPad = max(0, contentWidth - label.count)
+            lines.append("\(bar)\(Theme.accent)\(label)\(String(repeating: " ", count: labelPad))\(Theme.reset)")
+
+            // Input field (placeholder when empty), with a block cursor.
+            let cursor = "\(Theme.inverse) \(Theme.reset)\(Theme.statusBarBg)"
+            let content: String
+            let visLen: Int
+            if inputBuffer.isEmpty {
+                let placeholder = "describe the edit…"
+                content = "\(cursor)\(Theme.textMuted)\(placeholder)"
+                visLen = 1 + placeholder.count
+            } else {
+                content = "\(Theme.statusBarText)\(inputBuffer)\(cursor)"
+                visLen = inputBuffer.count + 1
+            }
+            let padding = max(0, contentWidth - visLen)
+            lines.append("\(bar)\(content)\(String(repeating: " ", count: padding))\(Theme.reset)")
+
         case .processing:
             let spinner = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
             let idx = Int(Date().timeIntervalSince1970 * 10) % spinner.count
@@ -211,13 +233,13 @@ class LLMModal {
         let hints: String
         switch state {
         case .inputting:
-            hints = "Enter send  Esc cancel"
+            hints = "↵ send   esc cancel"
         case .processing, .streaming:
-            hints = "Esc cancel"
+            hints = "esc cancel"
         case .result:
-            hints = "Tab accept  Esc cancel"
+            hints = "tab accept   esc cancel"
         case .error:
-            hints = "Esc dismiss"
+            hints = "esc dismiss"
         case .hidden:
             hints = ""
         }

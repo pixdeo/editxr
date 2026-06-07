@@ -57,6 +57,8 @@ class EditorApp {
     /// Whole-line range the next LLM result should review against, captured
     /// when the modal opens (selection or current block).
     private var reviewRange: (startLine: Int, endLine: Int)?
+    /// Drives re-renders so the LLM spinner animates while processing.
+    private var spinnerTimer: DispatchSourceTimer?
 
     init(state: EditorState) {
         self.state = state
@@ -66,6 +68,7 @@ class EditorApp {
         
         llmModal = LLMModal(llmService: llmService)
         llmModal?.onStateChanged = { [weak self] in
+            self?.updateSpinnerTimer()
             self?.render()
         }
         llmModal?.onResultReady = { [weak self] text in
@@ -412,6 +415,21 @@ class EditorApp {
         llmService.openRouterKey = state.openRouterKey
         llmService.openRouterModel = state.openRouterModel
         llmService.setProvider(state.llmProvider, openAIAccessToken: state.openAIAccessToken)
+    }
+
+    /// Start/stop a ~10fps re-render loop while the LLM spinner is on screen.
+    private func updateSpinnerTimer() {
+        let animating = llmModal?.isAnimating ?? false
+        if animating, spinnerTimer == nil {
+            let timer = DispatchSource.makeTimerSource(queue: .main)
+            timer.schedule(deadline: .now() + 0.1, repeating: 0.1)
+            timer.setEventHandler { [weak self] in self?.render() }
+            timer.resume()
+            spinnerTimer = timer
+        } else if !animating, let timer = spinnerTimer {
+            timer.cancel()
+            spinnerTimer = nil
+        }
     }
 
     private func showLLMModal() {
