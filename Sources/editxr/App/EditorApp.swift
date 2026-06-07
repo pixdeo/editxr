@@ -112,11 +112,11 @@ class EditorApp {
             PaletteCommand(title: "Go to bottom", shortcut: "End") { [weak self] in self?.state.goToBottom() },
             PaletteCommand(title: "Page up", shortcut: "PgUp") { [weak self] in
                 guard let self = self else { return }
-                self.state.pageUp(viewportHeight: self.getTerminalSize().height - 2)
+                self.state.pageUp(viewportHeight: self.getTerminalSize().height - 3)
             },
             PaletteCommand(title: "Page down", shortcut: "PgDn") { [weak self] in
                 guard let self = self else { return }
-                self.state.pageDown(viewportHeight: self.getTerminalSize().height - 2)
+                self.state.pageDown(viewportHeight: self.getTerminalSize().height - 3)
             },
             PaletteCommand(title: "AI assist", shortcut: "^Space") { [weak self] in self?.showLLMModal() },
         ]
@@ -479,7 +479,7 @@ class EditorApp {
     
     private func handleArrowKey(_ key: ArrowKey) {
         let size = getTerminalSize()
-        let viewportHeight = size.height - 2
+        let viewportHeight = size.height - 3
         
         switch key {
         case .up:
@@ -555,33 +555,37 @@ class EditorApp {
     }
     
     private func renderEditor(width: Int, height: Int) -> String {
-        var lines: [String] = []
-        var reservedLines = 2
-        
+        // Top bar (filename + optional markdown title) + status + hint bars.
+        var reservedLines = 3
+
         let modalLines = llmModal?.render(width: width) ?? []
         if !modalLines.isEmpty {
             reservedLines += modalLines.count
         }
-        
+
         let contentHeight = height - reservedLines
         let gutter = gutterWidth()
         let contentWidth = width - gutter
-        
+
         state.setViewportWidth(contentWidth)
         state.adjustScroll(viewportHeight: contentHeight, viewportWidth: contentWidth)
-        
+
+        var lines: [String] = [padToWidth(renderTopBar(width: width), width: width)]
+
+        var content: [String]
         switch state.viewMode {
         case .normal:
-            lines = renderNormalMode(width: contentWidth, height: contentHeight, gutterWidth: gutter)
+            content = renderNormalMode(width: contentWidth, height: contentHeight, gutterWidth: gutter)
         case .raw:
-            lines = renderRawMode(width: contentWidth, height: contentHeight, gutterWidth: gutter)
+            content = renderRawMode(width: contentWidth, height: contentHeight, gutterWidth: gutter)
         }
-        
-        while lines.count < contentHeight {
+
+        while content.count < contentHeight {
             let emptyGutter = renderGutter(lineNumber: 0, width: gutter).replacingOccurrences(of: String(0), with: " ")
-            lines.append(padToWidth(emptyGutter, width: width))
+            content.append(padToWidth(emptyGutter, width: width))
         }
-        
+        lines += content
+
         for modalLine in modalLines {
             lines.append(padToWidth(modalLine, width: width))
         }
@@ -1926,9 +1930,43 @@ class EditorApp {
         return result
     }
     
+    private func renderTopBar(width: Int) -> String {
+        let name = (state.filePath as NSString).lastPathComponent
+        var content = "\(Theme.textSecondary)\(name)\(Theme.reset)"
+        if let title = documentTitle() {
+            content += "\(Theme.textMuted) — \(title)\(Theme.reset)"
+        }
+        return truncateToWidth(content, width: width)
+    }
+
+    /// The document's title: frontmatter `title:`, else the first H1 heading.
+    private func documentTitle() -> String? {
+        let lines = state.document.lines
+
+        if lines.first?.trimmingCharacters(in: .whitespaces) == "---" {
+            for line in lines.dropFirst() {
+                let t = line.trimmingCharacters(in: .whitespaces)
+                if t == "---" { break }
+                if t.lowercased().hasPrefix("title:") {
+                    let value = t.dropFirst("title:".count).trimmingCharacters(in: CharacterSet(charactersIn: " \"'"))
+                    if !value.isEmpty { return String(value) }
+                }
+            }
+        }
+
+        for line in lines {
+            let t = line.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("# ") {
+                let value = t.dropFirst(2).trimmingCharacters(in: .whitespaces)
+                if !value.isEmpty { return String(value) }
+            }
+        }
+        return nil
+    }
+
     private func renderStatusBar(width: Int) -> String {
         let doc = state.document
-        
+
         var leftParts: [String] = []
         if state.viewMode == .raw {
             leftParts.append("[RAW]")
