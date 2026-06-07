@@ -82,10 +82,13 @@ struct Theme {
     static var textPrimary: String { mode == .dark ? "\u{1B}[38;2;229;229;229m" : "\u{1B}[38;2;26;26;26m" }
     static var textSecondary: String { mode == .dark ? "\u{1B}[38;2;163;163;163m" : "\u{1B}[38;2;102;102;102m" }
     static var textMuted: String { mode == .dark ? "\u{1B}[38;2;115;115;115m" : "\u{1B}[38;2;138;138;138m" }
-    static var accent: String { "\u{1B}[38;2;0;0;0m" }
+    static var accent: String { mode == .dark ? "\u{1B}[38;2;220;220;220m" : "\u{1B}[38;2;0;0;0m" }
 
     static var statusBarBg: String { mode == .dark ? "\u{1B}[48;2;38;38;38m" : "\u{1B}[48;2;240;240;240m" }
     static var statusBarText: String { mode == .dark ? "\u{1B}[38;2;163;163;163m" : "\u{1B}[38;2;100;100;100m" }
+    // Translucent drop-shadow (Norton Commander style): underlying glyphs stay
+    // visible but dimmed, over a dark background.
+    static var shadowStyle: String { mode == .dark ? "\u{1B}[48;2;0;0;0m\u{1B}[38;2;78;78;78m" : "\u{1B}[48;2;200;200;200m\u{1B}[38;2;140;140;140m" }
 
     static var selectionBg: String { mode == .dark ? "\u{1B}[48;2;55;90;99m" : "\u{1B}[48;2;227;248;248m" }
     static var selectionFg: String { mode == .dark ? "\u{1B}[38;2;229;229;229m" : "\u{1B}[38;2;26;26;26m" }

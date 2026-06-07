@@ -19,6 +19,8 @@ class EditorState: ObservableObject {
     @Published var showHelp: Bool = true
     @Published var showLineNumbers: Bool = false
     @Published var wordWrap: Bool = true
+    @Published var scrollPastEnd: Bool = true
+    @Published var fullTable: Bool = true
     @Published var isDirty: Bool = false
     @Published var showSavedIndicator: Bool = false
     @Published var scrollOffset: Int = 0
@@ -47,6 +49,8 @@ class EditorState: ObservableObject {
         let config = Config.load()
         self.showHelp = config.showHelp
         self.wordWrap = config.wordWrap
+        self.scrollPastEnd = config.scrollPastEnd ?? true
+        self.fullTable = config.fullTable ?? true
         self.viewMode = config.renderMarkdown ? .normal : .raw
         self.llmProvider = config.llmProvider
         self.openAIAccessToken = config.openAIAccessToken
@@ -160,11 +164,23 @@ class EditorState: ObservableObject {
         scrollX = 0
         saveConfig()
     }
+
+    func toggleScrollPastEnd() {
+        scrollPastEnd.toggle()
+        saveConfig()
+    }
+
+    func toggleFullTable() {
+        fullTable.toggle()
+        saveConfig()
+    }
     
     private func saveConfig() {
         var config = Config.load()
         config.showHelp = showHelp
         config.wordWrap = wordWrap
+        config.scrollPastEnd = scrollPastEnd
+        config.fullTable = fullTable
         config.renderMarkdown = viewMode == .normal
         config.llmProvider = llmProvider
         config.openAIAccessToken = openAIAccessToken
@@ -499,9 +515,15 @@ class EditorState: ObservableObject {
             scrollOffset = cursorLine - viewportHeight + scrollMargin + 1
         }
         
-        let maxScroll = max(0, document.lines.count - viewportHeight)
+        let lastLine = document.lines.count - 1
+        if scrollPastEnd && cursorLine == lastLine {
+            // Let the end of the document rest at the vertical middle (black below).
+            scrollOffset = max(scrollOffset, lastLine - viewportHeight / 2)
+        }
+        let endSlack = scrollPastEnd ? viewportHeight / 2 : 0
+        let maxScroll = max(0, document.lines.count - viewportHeight + endSlack)
         scrollOffset = min(scrollOffset, maxScroll)
-        
+
         if cursorColumn < scrollX + scrollMarginX {
             scrollX = max(0, cursorColumn - scrollMarginX)
         }
@@ -527,7 +549,11 @@ class EditorState: ObservableObject {
         }
         
         let totalVisualLines = countVisualLines(viewportWidth: viewportWidth)
-        let maxScroll = max(0, totalVisualLines - viewportHeight)
+        if scrollPastEnd && cursorVisualLine == totalVisualLines - 1 {
+            scrollOffset = max(scrollOffset, cursorVisualLine - viewportHeight / 2)
+        }
+        let endSlack = scrollPastEnd ? viewportHeight / 2 : 0
+        let maxScroll = max(0, totalVisualLines - viewportHeight + endSlack)
         scrollOffset = min(scrollOffset, maxScroll)
     }
     
@@ -537,8 +563,19 @@ class EditorState: ObservableObject {
             visualLine += wrappedLineCount(document.lines[i], width: viewportWidth)
         }
         let currentLine = document.lines[document.cursorLine]
-        let segmentIndex = document.cursorColumn / max(1, viewportWidth)
-        visualLine += min(segmentIndex, wrappedLineCount(currentLine, width: viewportWidth) - 1)
+        let segments = wrapLineForNavigation(currentLine, width: viewportWidth)
+        var segmentIndex = 0
+        for (idx, seg) in segments.enumerated() {
+            let segEnd = seg.startOffset + seg.segment.count
+            if document.cursorColumn >= seg.startOffset && document.cursorColumn < segEnd {
+                segmentIndex = idx
+                break
+            }
+            if idx == segments.count - 1 && document.cursorColumn >= seg.startOffset {
+                segmentIndex = idx
+            }
+        }
+        visualLine += segmentIndex
         return visualLine
     }
     
@@ -551,19 +588,7 @@ class EditorState: ObservableObject {
     }
     
     private func wrappedLineCount(_ line: String, width: Int) -> Int {
-        guard width > 0 else { return 1 }
-        if line.isEmpty { return 1 }
-        if line.count <= width { return 1 }
-        
-        var count = 0
-        var remaining = line.count
-        
-        while remaining > 0 {
-            count += 1
-            remaining -= width
-        }
-        
-        return max(1, count)
+        return wrapLineForNavigation(line, width: width).count
     }
     
     func pageUp(viewportHeight: Int) {
@@ -580,5 +605,18 @@ class EditorState: ObservableObject {
         document.cursorColumn = min(document.cursorColumn, document.currentLineText.count)
         document.clearSelection()
         scrollOffset = min(max(0, document.lines.count - viewportHeight), scrollOffset + pageSize)
+    }
+
+    func goToTop() {
+        document.cursorLine = 0
+        document.cursorColumn = 0
+        document.clearSelection()
+        scrollOffset = 0
+    }
+
+    func goToBottom() {
+        document.cursorLine = max(0, document.lines.count - 1)
+        document.cursorColumn = min(document.cursorColumn, document.currentLineText.count)
+        document.clearSelection()
     }
 }

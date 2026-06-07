@@ -8,6 +8,8 @@ private enum SegmentRenderMode {
     case heading(String)
     case list(ListRender)
     case quote(QuoteRender)
+    case frontmatterDelimiter
+    case frontmatterProp(key: String, value: String)
 }
 
 private enum TodoState {
@@ -66,18 +68,53 @@ class EditorApp {
 
         llmService.setProvider(state.llmProvider, openAIAccessToken: state.openAIAccessToken)
 
-        commandPanel = CommandPanel(selectedProvider: state.llmProvider, openAIIsSignedIn: state.openAIIsSignedIn)
+        commandPanel = CommandPanel()
         commandPanel?.onStateChanged = { [weak self] in
             self?.render()
         }
-        commandPanel?.onSelectProvider = { [weak self] provider in
+    }
+
+    private func buildCommands() -> [PaletteCommand] {
+        var cmds: [PaletteCommand] = [
+            PaletteCommand(title: "Save", shortcut: "^S") { [weak self] in self?.state.save() },
+            PaletteCommand(title: "Toggle raw view", shortcut: "^R") { [weak self] in self?.state.toggleViewMode() },
+            PaletteCommand(title: "Toggle word wrap", shortcut: "^W") { [weak self] in self?.state.toggleWordWrap() },
+            PaletteCommand(title: "Toggle line numbers", shortcut: "^L") { [weak self] in self?.state.toggleLineNumbers() },
+            PaletteCommand(title: "Toggle help bar", shortcut: "^/") { [weak self] in self?.state.toggleHelp() },
+            PaletteCommand(title: "Toggle scroll past end", shortcut: "") { [weak self] in self?.state.toggleScrollPastEnd() },
+            PaletteCommand(title: "Toggle full table borders", shortcut: "") { [weak self] in self?.state.toggleFullTable() },
+            PaletteCommand(title: "Undo", shortcut: "^U") { [weak self] in self?.state.undo() },
+            PaletteCommand(title: "Redo", shortcut: "^G") { [weak self] in self?.state.redo() },
+            PaletteCommand(title: "Go to top", shortcut: "Home") { [weak self] in self?.state.goToTop() },
+            PaletteCommand(title: "Go to bottom", shortcut: "End") { [weak self] in self?.state.goToBottom() },
+            PaletteCommand(title: "Page up", shortcut: "PgUp") { [weak self] in
+                guard let self = self else { return }
+                self.state.pageUp(viewportHeight: self.getTerminalSize().height - 2)
+            },
+            PaletteCommand(title: "Page down", shortcut: "PgDn") { [weak self] in
+                guard let self = self else { return }
+                self.state.pageDown(viewportHeight: self.getTerminalSize().height - 2)
+            },
+            PaletteCommand(title: "AI assist", shortcut: "^Space") { [weak self] in self?.showLLMModal() },
+        ]
+        if state.openAIIsSignedIn {
+            cmds.append(PaletteCommand(title: "AI provider: OpenAI", shortcut: "") { [weak self] in
+                guard let self = self else { return }
+                self.state.setLLMProvider(.openaiOAuth)
+                self.llmService.setProvider(.openaiOAuth, openAIAccessToken: self.state.openAIAccessToken)
+            })
+        } else {
+            cmds.append(PaletteCommand(title: "Sign in to OpenAI", shortcut: "") { [weak self] in
+                self?.startOpenAIOAuth()
+            })
+        }
+        cmds.append(PaletteCommand(title: "AI provider: LM Studio", shortcut: "") { [weak self] in
             guard let self = self else { return }
-            self.state.setLLMProvider(provider)
-            self.llmService.setProvider(provider, openAIAccessToken: self.state.openAIAccessToken)
-        }
-        commandPanel?.onRequestOpenAIOAuth = { [weak self] in
-            self?.startOpenAIOAuth()
-        }
+            self.state.setLLMProvider(.lmStudio)
+            self.llmService.setProvider(.lmStudio, openAIAccessToken: self.state.openAIAccessToken)
+        })
+        cmds.append(PaletteCommand(title: "Quit", shortcut: "^Q") { [weak self] in self?.quit() })
+        return cmds
     }
     
     func start() {
@@ -149,6 +186,16 @@ class EditorApp {
         guard let string = String(data: data, encoding: .utf8) else { return }
 
         if let panel = commandPanel, panel.isVisible {
+            if string == "\u{1B}[A" {
+                panel.moveSelection(-1)
+                render()
+                return
+            }
+            if string == "\u{1B}[B" {
+                panel.moveSelection(1)
+                render()
+                return
+            }
             for char in string {
                 if char == Key.ctrlP {
                     toggleCommandPanel()
@@ -332,6 +379,10 @@ class EditorApp {
             state.moveWordLeft(selecting: false)
         case .ctrlRight:
             state.moveWordRight(selecting: false)
+        case .ctrlUp, .home:
+            state.goToTop()
+        case .ctrlDown, .end:
+            state.goToBottom()
         case .ctrlShiftLeft:
             state.moveWordLeft(selecting: true)
         case .ctrlShiftRight:
@@ -347,7 +398,7 @@ class EditorApp {
     private func render() {
         let size = getTerminalSize()
         let output = renderEditor(width: size.width, height: size.height)
-        print("\u{1B}[H\(output)\u{1B}[\(size.height);\(size.width)H", terminator: "")
+        print("\u{1B}[H\(output)\u{1B}[0J\u{1B}[\(size.height);\(size.width)H", terminator: "")
         fflush(stdout)
     }
     
@@ -417,19 +468,160 @@ class EditorApp {
         if state.showHelp {
             lines.append(padToWidth(renderHelpBar(width: width), width: width))
         } else {
-            lines.append(String(repeating: " ", count: width))
+            lines.append(padToWidth(renderHintBar(width: width), width: width))
         }
 
-        if let overlay = commandPanel?.render(width: width, height: height) {
-            for (i, overlayLine) in overlay.lines.enumerated() {
-                let row = overlay.top + i
-                if row >= 0 && row < lines.count {
-                    lines[row] = padToWidth(overlayLine, width: width)
-                }
+        overlayCommandPanel(into: &lines, width: width, height: height)
+
+        // Erase to end of each line so wide glyphs / shorter frames leave no residue.
+        return lines.map { $0 + "\u{1B}[K" }.joined(separator: "\n")
+    }
+
+    private func overlayCommandPanel(into lines: inout [String], width: Int, height: Int) {
+        guard let overlay = commandPanel?.render(width: width, height: height) else { return }
+        let top = overlay.top
+        let left = overlay.left
+        let bw = overlay.width
+        let rows = overlay.lines.count
+
+        // Translucent drop shadow: 2 cols to the right (shifted down 1) + one
+        // bottom row (shifted right 2). Underlying text is dimmed, not erased.
+        for i in 1...rows {
+            let row = top + i
+            if row >= 0 && row < lines.count {
+                lines[row] = applyShadow(to: lines[row], at: left + bw, count: 2)
             }
         }
-        
-        return lines.joined(separator: "\n")
+        let bottomRow = top + rows
+        if bottomRow >= 0 && bottomRow < lines.count {
+            lines[bottomRow] = applyShadow(to: lines[bottomRow], at: left + 2, count: bw)
+        }
+
+        // The panel box itself.
+        for (i, boxLine) in overlay.lines.enumerated() {
+            let row = top + i
+            if row >= 0 && row < lines.count {
+                lines[row] = spliceVisible(base: lines[row], insert: boxLine, at: left, insertWidth: bw, width: width)
+            }
+        }
+    }
+
+    /// Re-tint `count` visible columns of `base` starting at column `at` with the
+    /// translucent shadow style, keeping the underlying glyphs (Norton-style shadow).
+    private func applyShadow(to base: String, at: Int, count: Int) -> String {
+        let chars = Array(base)
+        let n = chars.count
+        var i = 0
+        var col = 0
+        var active = ""
+        var out = ""
+
+        func readEscape() -> String {
+            var esc = ""
+            while i < n {
+                let c = chars[i]
+                esc.append(c)
+                i += 1
+                if c.isLetter { break }
+            }
+            return esc
+        }
+
+        while i < n && col < at {
+            let c = chars[i]
+            if c == "\u{1B}" {
+                let esc = readEscape()
+                out += esc
+                if esc == Theme.reset { active = "" } else { active += esc }
+            } else {
+                out.append(c)
+                col += displayWidth(c)
+                i += 1
+            }
+        }
+        if col < at {
+            out += String(repeating: " ", count: at - col)
+        }
+
+        out += Theme.reset + Theme.shadowStyle
+        var shaded = 0
+        while i < n && shaded < count {
+            let c = chars[i]
+            if c == "\u{1B}" {
+                _ = readEscape()   // drop original styling inside the shadow
+            } else {
+                out.append(c)
+                shaded += displayWidth(c)
+                i += 1
+            }
+        }
+        if shaded < count {
+            out += String(repeating: " ", count: count - shaded)
+        }
+
+        out += Theme.reset + active
+        if i < n {
+            out += String(chars[i..<n])
+        }
+        return out
+    }
+
+    /// Splice `insert` (visible width `insertWidth`) into `base` at visible column `at`,
+    /// preserving base content (and its ANSI styling) on both sides.
+    private func spliceVisible(base: String, insert: String, at: Int, insertWidth: Int, width: Int) -> String {
+        let chars = Array(base)
+        let n = chars.count
+        var i = 0
+        var col = 0
+        var active = ""
+        var out = ""
+
+        func readEscape() -> String {
+            var esc = ""
+            while i < n {
+                let c = chars[i]
+                esc.append(c)
+                i += 1
+                if c.isLetter { break }
+            }
+            return esc
+        }
+
+        while i < n && col < at {
+            let c = chars[i]
+            if c == "\u{1B}" {
+                let esc = readEscape()
+                out += esc
+                if esc == Theme.reset { active = "" } else { active += esc }
+            } else {
+                out.append(c)
+                col += displayWidth(c)
+                i += 1
+            }
+        }
+        if col < at {
+            out += String(repeating: " ", count: at - col)
+        }
+
+        out += Theme.reset + insert + Theme.reset
+
+        var skipped = 0
+        while i < n && skipped < insertWidth {
+            let c = chars[i]
+            if c == "\u{1B}" {
+                let esc = readEscape()
+                if esc == Theme.reset { active = "" } else { active += esc }
+            } else {
+                skipped += displayWidth(c)
+                i += 1
+            }
+        }
+
+        out += active
+        if i < n {
+            out += String(chars[i..<n])
+        }
+        return out
     }
 
     private func toggleCommandPanel() {
@@ -438,7 +630,8 @@ class EditorApp {
             openAIOAuth.cancel()
             panel.hide()
         } else {
-            panel.show(selectedProvider: state.llmProvider, openAIIsSignedIn: state.openAIIsSignedIn)
+            panel.setCommands(buildCommands())
+            panel.show()
         }
         render()
     }
@@ -456,7 +649,6 @@ class EditorApp {
                     self.state.setOpenAITokens(accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt)
                     self.state.setLLMProvider(.openaiOAuth)
                     self.llmService.setProvider(.openaiOAuth, openAIAccessToken: self.state.openAIAccessToken)
-                    self.commandPanel?.setOpenAISignedIn(true)
                     self.commandPanel?.hide()
                 case .failure(let err):
                     self.commandPanel?.setError(err.localizedDescription)
@@ -476,22 +668,50 @@ class EditorApp {
         
         let startLine = state.scrollOffset
         let endLine = min(doc.lines.count, startLine + height)
-        
+        let tableMap = selection == nil ? tableRenderMap(width: width) : [:]
+
         var inCodeBlock = isInsideCodeBlock(beforeLine: startLine, doc: doc)
+        let inFrontmatterAtStart = isInsideFrontmatter(lineIndex: startLine, doc: doc)
+        var inFrontmatter = inFrontmatterAtStart
         
         for i in startLine..<endLine {
             let line = doc.lines[i]
             let isCodeDelimiter = MarkdownLineParser.isCodeBlockDelimiter(line)
+            let isFmDelimiter = isFrontmatterDelimiter(line)
             
-            if isCodeDelimiter {
+            if isCodeDelimiter && !inFrontmatter {
                 inCodeBlock = !inCodeBlock
+            }
+            
+            if isFmDelimiter && (i == 0 || inFrontmatter) {
+                if i == 0 {
+                    inFrontmatter = true
+                } else {
+                    inFrontmatter = false
+                }
             }
             
             let isCursorLine = i == doc.cursorLine
             var renderedLine: String
-            
-            if selection != nil {
+
+            if let tableLine = tableMap[i] {
+                renderedLine = tableLine
+            } else if selection != nil {
                 renderedLine = renderLineWithSelection(line: line, lineIndex: i, selection: selection, doc: doc)
+            } else if isFmDelimiter && (i == 0 || isInsideFrontmatter(lineIndex: i, doc: doc) || (i > 0 && isInsideFrontmatter(lineIndex: i - 1, doc: doc))) {
+                if isCursorLine {
+                    renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
+                } else {
+                    renderedLine = renderFrontmatterDelimiter(width: width)
+                }
+            } else if inFrontmatter || isInsideFrontmatter(lineIndex: i, doc: doc) {
+                if isCursorLine {
+                    renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
+                } else if let prop = parseFrontmatterProp(line) {
+                    renderedLine = renderFrontmatterProp(key: prop.key, value: prop.value)
+                } else {
+                    renderedLine = "\(Theme.textMuted)\(line)\(Theme.reset)"
+                }
             } else if inCodeBlock || isCodeDelimiter {
                 renderedLine = renderCodeBlockLine(line: line, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn)
             } else {
@@ -524,27 +744,173 @@ class EditorApp {
             let scrolled = applyHorizontalScroll(renderedLine, scrollX: state.scrollX, width: width)
             output.append(padToWidth(gutter + scrolled, width: gutterWidth + width))
         }
-        
+
         return output
     }
-    
-    
+
+    // MARK: - Markdown tables
+
+    private enum TableRole { case header, separator, data, top, bottom }
+
+    private func isBlankLine(_ line: String) -> Bool {
+        return line.trimmingCharacters(in: .whitespaces).isEmpty
+    }
+
+    private func isTableSeparatorLine(_ line: String) -> Bool {
+        var t = line.trimmingCharacters(in: .whitespaces)
+        guard t.contains("-") && t.contains("|") else { return false }
+        if t.hasPrefix("|") { t.removeFirst() }
+        if t.hasSuffix("|") { t.removeLast() }
+        let cells = t.components(separatedBy: "|")
+        guard !cells.isEmpty else { return false }
+        for cell in cells {
+            let c = cell.trimmingCharacters(in: .whitespaces)
+            if c.isEmpty || !c.contains("-") { return false }
+            if !c.allSatisfy({ $0 == "-" || $0 == ":" }) { return false }
+        }
+        return true
+    }
+
+    private func isTableRowLine(_ line: String) -> Bool {
+        let t = line.trimmingCharacters(in: .whitespaces)
+        return t.contains("|") && !t.isEmpty
+    }
+
+    private func parseTableCells(_ line: String) -> [String] {
+        var t = line.trimmingCharacters(in: .whitespaces)
+        if t.hasPrefix("|") { t.removeFirst() }
+        if t.hasSuffix("|") { t.removeLast() }
+        return t.components(separatedBy: "|").map { $0.trimmingCharacters(in: .whitespaces) }
+    }
+
+    private func truncateCell(_ s: String, to maxWidth: Int) -> String {
+        guard s.displayWidth > maxWidth else { return s }
+        var out = ""
+        var w = 0
+        for ch in s {
+            let cw = displayWidth(ch)
+            if w + cw > maxWidth { break }
+            out.append(ch)
+            w += cw
+        }
+        return out
+    }
+
+    /// Map of line index -> styled table-row string. Blocks containing the cursor
+    /// are omitted so they render raw (and stay editable).
+    private func tableRenderMap(width: Int) -> [Int: String] {
+        let lines = state.document.lines
+        let n = lines.count
+        let cursorLine = state.document.cursorLine
+        var map: [Int: String] = [:]
+        var i = 0
+        while i < n {
+            if isTableRowLine(lines[i]) && !isTableSeparatorLine(lines[i]) &&
+               i + 1 < n && isTableSeparatorLine(lines[i + 1]) {
+                var e = i + 2
+                while e < n && isTableRowLine(lines[e]) && !isTableSeparatorLine(lines[e]) {
+                    e += 1
+                }
+                let block = i..<e
+
+                var numCols = 0
+                var rowCells: [[String]] = []
+                for r in block where r != i + 1 {
+                    let cells = parseTableCells(lines[r])
+                    numCols = max(numCols, cells.count)
+                    rowCells.append(cells)
+                }
+                var widths = [Int](repeating: 1, count: numCols)
+                for cells in rowCells {
+                    for c in 0..<numCols where c < cells.count {
+                        widths[c] = max(widths[c], cells[c].displayWidth)
+                    }
+                }
+
+                if !block.contains(cursorLine) {
+                    for r in block {
+                        let role: TableRole = r == i ? .header : (r == i + 1 ? .separator : .data)
+                        map[r] = renderTableRow(line: lines[r], role: role, widths: widths, numCols: numCols, width: width)
+                    }
+                    // Full-box borders reuse the blank lines surrounding the table.
+                    if state.fullTable {
+                        if i - 1 >= 0 && isBlankLine(lines[i - 1]) && cursorLine != i - 1 {
+                            map[i - 1] = renderTableRow(line: "", role: .top, widths: widths, numCols: numCols, width: width)
+                        }
+                        if e < n && isBlankLine(lines[e]) && cursorLine != e {
+                            map[e] = renderTableRow(line: "", role: .bottom, widths: widths, numCols: numCols, width: width)
+                        }
+                    }
+                }
+                i = e
+            } else {
+                i += 1
+            }
+        }
+        return map
+    }
+
+    private func renderTableRow(line: String, role: TableRole, widths: [Int], numCols: Int, width: Int) -> String {
+        let border = Theme.textMuted
+        var out = ""
+
+        if role == .separator || role == .top || role == .bottom {
+            let (lead, junction, tail): (String, String, String)
+            switch role {
+            case .top: (lead, junction, tail) = ("┌", "┬", "┐")
+            case .bottom: (lead, junction, tail) = ("└", "┴", "┘")
+            default: (lead, junction, tail) = ("├", "┼", "┤")
+            }
+            out += "\(border)\(lead)"
+            for c in 0..<numCols {
+                out += String(repeating: "─", count: widths[c] + 2)
+                out += (c == numCols - 1) ? tail : junction
+            }
+            out += Theme.reset
+            return truncateToWidth(out, width: width)
+        }
+
+        let cells = parseTableCells(line)
+        let style = role == .header ? "\(Theme.bold)\(Theme.textPrimary)" : Theme.textPrimary
+        out += "\(border)│\(Theme.reset)"
+        for c in 0..<numCols {
+            let raw = c < cells.count ? cells[c] : ""
+            let cell = truncateCell(raw, to: widths[c])
+            let pad = String(repeating: " ", count: max(0, widths[c] - cell.displayWidth))
+            out += " \(style)\(cell)\(Theme.reset)\(pad) \(border)│\(Theme.reset)"
+        }
+        return truncateToWidth(out, width: width)
+    }
+
+
     private func renderNormalModeWrapped(width: Int, height: Int, gutterWidth: Int) -> [String] {
         var output: [String] = []
         let doc = state.document
         let selection = doc.selectionRange
-        
+        let tableMap = selection == nil ? tableRenderMap(width: width) : [:]
+
         var visualLine = 0
         var inCodeBlock = false
         
         for i in 0..<doc.lines.count {
             let line = doc.lines[i]
             let isCodeDelimiter = MarkdownLineParser.isCodeBlockDelimiter(line)
+            let isFmDelimiter = isFrontmatterDelimiter(line)
+            let inFrontmatter = isInsideFrontmatter(lineIndex: i, doc: doc)
             
-            if isCodeDelimiter {
+            if isCodeDelimiter && !inFrontmatter && !isFmDelimiter {
                 inCodeBlock = !inCodeBlock
             }
-            
+
+            if let tableLine = tableMap[i] {
+                if visualLine >= state.scrollOffset && output.count < height {
+                    let gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
+                    output.append(padToWidth(gutter + tableLine, width: gutterWidth + width))
+                }
+                visualLine += 1
+                continue
+            }
+
             let isCursorLine = i == doc.cursorLine
             let spans = MarkdownLineParser.parse(line)
             let headingSpan = spans.first.flatMap { isHeadingSpan($0) ? $0 : nil }
@@ -552,13 +918,16 @@ class EditorApp {
             
             let (lineToWrap, mode) = resolveLineMode(
                 line: line,
+                lineIndex: i,
+                doc: doc,
                 isCursorLine: isCursorLine,
                 headingSpan: headingSpan,
                 cursorInSpan: cursorInSpan,
                 inCodeBlock: inCodeBlock,
                 isCodeDelimiter: isCodeDelimiter,
                 hasSelection: selection != nil,
-                spans: spans
+                spans: spans,
+                width: width
             )
             
             let wrappedSegments = wrapLine(lineToWrap, width: width)
@@ -615,17 +984,42 @@ class EditorApp {
     
     private func resolveLineMode(
         line: String,
+        lineIndex: Int,
+        doc: Document,
         isCursorLine: Bool,
         headingSpan: MarkdownSpan?,
         cursorInSpan: MarkdownSpan?,
         inCodeBlock: Bool,
         isCodeDelimiter: Bool,
         hasSelection: Bool,
-        spans: [MarkdownSpan]
+        spans: [MarkdownSpan],
+        width: Int
     ) -> (line: String, mode: SegmentRenderMode) {
         if hasSelection {
             return (line, .selection)
         }
+        
+        let isFmDelimiter = isFrontmatterDelimiter(line)
+        let inFrontmatter = isInsideFrontmatter(lineIndex: lineIndex, doc: doc)
+        let isFmClosing = isFmDelimiter && lineIndex > 0 && isInsideFrontmatter(lineIndex: lineIndex - 1, doc: doc)
+        
+        if isFmDelimiter && (lineIndex == 0 || isFmClosing) {
+            if isCursorLine {
+                return (line, .raw)
+            }
+            return (String(repeating: "─", count: width), .frontmatterDelimiter)
+        }
+        
+        if inFrontmatter {
+            if isCursorLine {
+                return (line, .raw)
+            }
+            if let prop = parseFrontmatterProp(line) {
+                return (line, .frontmatterProp(key: prop.key, value: prop.value))
+            }
+            return (line, .codeBlock)
+        }
+        
         if inCodeBlock || isCodeDelimiter {
             return (line, .codeBlock)
         }
@@ -695,6 +1089,10 @@ class EditorApp {
             return renderListSegment(segment: segment, segmentStart: segmentStart, render: render)
         case .quote(let render):
             return renderQuoteSegment(segment: segment, segmentStart: segmentStart, render: render)
+        case .frontmatterDelimiter:
+            return renderFrontmatterDelimiter(width: segment.count > 0 ? segment.count : 40)
+        case .frontmatterProp(let key, let value):
+            return renderFrontmatterProp(key: key, value: value)
         }
     }
     
@@ -866,6 +1264,49 @@ class EditorApp {
         }
 
         return result
+    }
+
+    private func renderFrontmatterDelimiter(width: Int) -> String {
+        let line = String(repeating: "─", count: max(3, width))
+        return "\(Theme.textMuted)\(line)\(Theme.reset)"
+    }
+
+    private func renderFrontmatterProp(key: String, value: String) -> String {
+        return "\(Theme.textSecondary)\(key):\(Theme.reset) \(Theme.textPrimary)\(value)\(Theme.reset)"
+    }
+
+    private func isFrontmatterDelimiter(_ line: String) -> Bool {
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        return trimmed == "---"
+    }
+
+    private func parseFrontmatterProp(_ line: String) -> (key: String, value: String)? {
+        guard let colonIndex = line.firstIndex(of: ":") else { return nil }
+        let key = String(line[..<colonIndex]).trimmingCharacters(in: .whitespaces)
+        let valueStart = line.index(after: colonIndex)
+        let value = String(line[valueStart...]).trimmingCharacters(in: .whitespaces)
+        guard !key.isEmpty else { return nil }
+        return (key, value)
+    }
+
+    private func isInsideFrontmatter(lineIndex: Int, doc: Document) -> Bool {
+        guard lineIndex > 0 else { return false }
+        guard doc.lines.count > 0 else { return false }
+        let firstLine = doc.lines[0].trimmingCharacters(in: .whitespaces)
+        guard firstLine == "---" else { return false }
+        
+        var foundClosing = false
+        for i in 1..<doc.lines.count {
+            let line = doc.lines[i].trimmingCharacters(in: .whitespaces)
+            if line == "---" {
+                if i >= lineIndex {
+                    return !foundClosing
+                }
+                foundClosing = true
+                break
+            }
+        }
+        return !foundClosing && lineIndex > 0
     }
     
     private func renderStyledSegment(segment: String, style: String, cursorColumn: Int) -> String {
@@ -1135,6 +1576,7 @@ class EditorApp {
     }
     
     private func renderLineRaw(line: String, cursorColumn: Int) -> String {
+        guard cursorColumn >= 0 else { return line }
         let col = min(cursorColumn, line.count)
         let before = String(line.prefix(col))
         let charAtCursor = col < line.count ? String(line[line.index(line.startIndex, offsetBy: col)]) : " "
@@ -1294,7 +1736,7 @@ class EditorApp {
             } else if inEscape {
                 if char.isLetter { inEscape = false }
             } else {
-                visibleCount += 1
+                visibleCount += displayWidth(char)
             }
         }
         if visibleCount >= width {
@@ -1318,9 +1760,10 @@ class EditorApp {
                     inEscape = false
                 }
             } else {
-                if visibleCount < width {
+                let w = displayWidth(char)
+                if visibleCount + w <= width {
                     result.append(char)
-                    visibleCount += 1
+                    visibleCount += w
                 } else {
                     // End any active styling and stop
                     result.append(Theme.reset)
@@ -1375,7 +1818,11 @@ class EditorApp {
         let content = parts.joined(separator: "  ")
         return content
     }
-    
+
+    private func renderHintBar(width: Int) -> String {
+        return "\(Theme.accent)ctrl+p \(Theme.textMuted)commands   \(Theme.accent)ctrl+/ \(Theme.textMuted)help\(Theme.reset)"
+    }
+
     private func extractBracketedPaste(_ input: String) -> String? {
         let pasteStart = "\u{1B}[200~"
         let pasteEnd = "\u{1B}[201~"
@@ -1410,8 +1857,10 @@ enum ArrowKey {
     case up, down, left, right
     case shiftUp, shiftDown, shiftLeft, shiftRight
     case ctrlLeft, ctrlRight
+    case ctrlUp, ctrlDown
     case ctrlShiftLeft, ctrlShiftRight
     case pageUp, pageDown
+    case home, end
 }
 
 class ArrowKeyParser {
@@ -1427,6 +1876,7 @@ class ArrowKeyParser {
         case semicolon
         case modifierValue
         case pageKey
+        case ss3
     }
     
     func parse(character: Character) -> Bool {
@@ -1444,15 +1894,28 @@ class ArrowKeyParser {
                 state = .bracket
                 return true
             }
+            if character == "O" {
+                state = .ss3
+                return true
+            }
             state = .initial
             return false
+
+        case .ss3:
+            state = .initial
+            switch character {
+            case "H": arrowKey = .home
+            case "F": arrowKey = .end
+            default: break
+            }
+            return true
             
         case .bracket:
             if character == "1" {
                 state = .modifier
                 return true
             }
-            if character == "5" || character == "6" {
+            if character == "5" || character == "6" || character == "4" {
                 buffer = [character]
                 state = .pageKey
                 return true
@@ -1463,6 +1926,8 @@ class ArrowKeyParser {
             case "B": arrowKey = .down
             case "C": arrowKey = .right
             case "D": arrowKey = .left
+            case "H": arrowKey = .home
+            case "F": arrowKey = .end
             default: break
             }
             return true
@@ -1474,14 +1939,20 @@ class ArrowKeyParser {
                     arrowKey = .pageUp
                 } else if buffer[0] == "6" {
                     arrowKey = .pageDown
+                } else if buffer[0] == "4" {
+                    arrowKey = .end
                 }
             }
             return true
-            
+
         case .modifier:
             if character == ";" {
                 state = .semicolon
                 return true
+            }
+            // ESC [ 1 ~  == Home
+            if character == "~" {
+                arrowKey = .home
             }
             state = .initial
             return true
@@ -1507,6 +1978,8 @@ class ArrowKeyParser {
             // Ctrl+Arrow (modifier 5)
             case ("5", "C"): arrowKey = .ctrlRight
             case ("5", "D"): arrowKey = .ctrlLeft
+            case ("5", "A"): arrowKey = .ctrlUp
+            case ("5", "B"): arrowKey = .ctrlDown
             // Ctrl+Shift+Arrow (modifier 6)
             case ("6", "C"): arrowKey = .ctrlShiftRight
             case ("6", "D"): arrowKey = .ctrlShiftLeft

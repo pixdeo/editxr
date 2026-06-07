@@ -4,6 +4,9 @@ struct Config: Codable {
     var showHelp: Bool = true
     var wordWrap: Bool = true
     var renderMarkdown: Bool = true
+    // Optional so configs written before this field still decode.
+    var scrollPastEnd: Bool? = true
+    var fullTable: Bool? = true
 
     var llmProvider: LLMProvider = .lmStudio
     var openAIAccessToken: String? = nil
