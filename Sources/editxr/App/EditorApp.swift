@@ -117,29 +117,69 @@ class EditorApp {
             },
             PaletteCommand(title: "AI assist", shortcut: "^Space") { [weak self] in self?.showLLMModal() },
         ]
+        cmds.append(PaletteCommand(title: "LLM settings", shortcut: "→") { [weak self] in
+            self?.pushLLMSettings()
+        })
+        cmds.append(PaletteCommand(title: "Quit", shortcut: "^Q") { [weak self] in self?.quit() })
+        return cmds
+    }
+
+    // MARK: - LLM settings menus
+
+    private func selectProvider(_ provider: LLMProvider) {
+        state.setLLMProvider(provider)
+        syncLLMService()
+        commandPanel?.hide()
+    }
+
+    private func pushLLMSettings() {
+        var cmds: [PaletteCommand] = []
+        func mark(_ p: LLMProvider) -> String { state.llmProvider == p ? "current" : "" }
+
+        cmds.append(PaletteCommand(title: "Provider: LM Studio", shortcut: mark(.lmStudio)) { [weak self] in
+            self?.selectProvider(.lmStudio)
+        })
         if state.openAIIsSignedIn {
-            cmds.append(PaletteCommand(title: "AI provider: OpenAI", shortcut: "") { [weak self] in
-                guard let self = self else { return }
-                self.state.setLLMProvider(.openaiOAuth)
-                self.syncLLMService()
+            cmds.append(PaletteCommand(title: "Provider: OpenAI", shortcut: mark(.openaiOAuth)) { [weak self] in
+                self?.selectProvider(.openaiOAuth)
             })
         } else {
             cmds.append(PaletteCommand(title: "Sign in to OpenAI", shortcut: "") { [weak self] in
                 self?.startOpenAIOAuth()
             })
         }
-        cmds.append(PaletteCommand(title: "AI provider: LM Studio", shortcut: "") { [weak self] in
-            guard let self = self else { return }
-            self.state.setLLMProvider(.lmStudio)
-            self.syncLLMService()
+        cmds.append(PaletteCommand(title: "OpenRouter", shortcut: "→") { [weak self] in
+            self?.pushOpenRouterSettings()
         })
-        cmds.append(PaletteCommand(title: "AI provider: Mock (offline)", shortcut: "") { [weak self] in
-            guard let self = self else { return }
-            self.state.setLLMProvider(.mock)
-            self.syncLLMService()
+        cmds.append(PaletteCommand(title: "Provider: Mock (offline)", shortcut: mark(.mock)) { [weak self] in
+            self?.selectProvider(.mock)
         })
-        cmds.append(PaletteCommand(title: "Quit", shortcut: "^Q") { [weak self] in self?.quit() })
-        return cmds
+        commandPanel?.push(title: "LLM Settings", commands: cmds)
+    }
+
+    private func pushOpenRouterSettings() {
+        let keyLabel = (state.openRouterKey?.isEmpty == false) ? "set" : "not set"
+        let modelLabel = (state.openRouterModel?.isEmpty == false) ? state.openRouterModel! : "default"
+        let cmds: [PaletteCommand] = [
+            PaletteCommand(title: "Set API key", shortcut: keyLabel) { [weak self] in
+                guard let self = self else { return }
+                self.commandPanel?.beginInput(prompt: "OpenRouter API key", value: self.state.openRouterKey ?? "", isSecret: true) { [weak self] key in
+                    self?.state.setOpenRouterKey(key)
+                    self?.syncLLMService()
+                }
+            },
+            PaletteCommand(title: "Set model", shortcut: modelLabel) { [weak self] in
+                guard let self = self else { return }
+                self.commandPanel?.beginInput(prompt: "OpenRouter model (e.g. openai/gpt-4o-mini)", value: self.state.openRouterModel ?? "", isSecret: false) { [weak self] model in
+                    self?.state.setOpenRouterModel(model)
+                    self?.syncLLMService()
+                }
+            },
+            PaletteCommand(title: "Use OpenRouter", shortcut: state.llmProvider == .openRouter ? "current" : "") { [weak self] in
+                self?.selectProvider(.openRouter)
+            },
+        ]
+        commandPanel?.push(title: "OpenRouter", commands: cmds)
     }
     
     func start() {

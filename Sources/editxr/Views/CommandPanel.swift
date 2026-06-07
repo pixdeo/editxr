@@ -7,17 +7,28 @@ struct PaletteCommand {
 }
 
 final class CommandPanel {
+    struct InputField {
+        let prompt: String
+        var value: String
+        let isSecret: Bool
+        let onSubmit: (String) -> Void
+    }
+
     enum State {
         case hidden
         case browsing
+        case input(InputField)
         case oauth(url: String, message: String)
         case error(String)
     }
 
     private(set) var state: State = .hidden
+    private var title: String = "Commands"
     private var commands: [PaletteCommand] = []
     private var query: String = ""
     private var selectedIndex: Int = 0
+    // Nav stack of parent menus, for submenu push/pop.
+    private var stack: [(title: String, commands: [PaletteCommand], query: String, selectedIndex: Int)] = []
 
     var onStateChanged: (() -> Void)?
 
@@ -35,17 +46,50 @@ final class CommandPanel {
 
     func setCommands(_ commands: [PaletteCommand]) {
         self.commands = commands
+        self.title = "Commands"
+        self.stack = []
     }
 
     func show() {
         query = ""
         selectedIndex = 0
+        stack = []
         state = .browsing
         onStateChanged?()
     }
 
     func hide() {
         state = .hidden
+        stack = []
+        onStateChanged?()
+    }
+
+    // MARK: - Navigation
+
+    /// Push a submenu, keeping the current level on the stack to return to.
+    func push(title: String, commands: [PaletteCommand]) {
+        stack.append((self.title, self.commands, query, selectedIndex))
+        self.title = title
+        self.commands = commands
+        query = ""
+        selectedIndex = 0
+        state = .browsing
+        onStateChanged?()
+    }
+
+    private func pop() {
+        guard let parent = stack.popLast() else { hide(); return }
+        title = parent.title
+        commands = parent.commands
+        query = parent.query
+        selectedIndex = parent.selectedIndex
+        state = .browsing
+        onStateChanged?()
+    }
+
+    /// Switch the current level into a single-field text input.
+    func beginInput(prompt: String, value: String, isSecret: Bool, onSubmit: @escaping (String) -> Void) {
+        state = .input(InputField(prompt: prompt, value: value, isSecret: isSecret, onSubmit: onSubmit))
         onStateChanged?()
     }
 
@@ -77,6 +121,8 @@ final class CommandPanel {
         switch state {
         case .browsing:
             handleBrowsingKey(char)
+        case .input:
+            handleInputKey(char)
         case .oauth, .error:
             if char == Key.escape { hide() }
         case .hidden:
@@ -84,10 +130,35 @@ final class CommandPanel {
         }
     }
 
+    private func handleInputKey(_ char: Character) {
+        guard case .input(var field) = state else { return }
+        switch char {
+        case Key.escape:
+            state = .browsing           // cancel: back to the same menu level
+            onStateChanged?()
+        case Key.enter:
+            field.onSubmit(field.value)
+            state = .browsing           // return to the (unchanged) menu level
+            onStateChanged?()
+        case Key.backspace:
+            if !field.value.isEmpty {
+                field.value.removeLast()
+                state = .input(field)
+                onStateChanged?()
+            }
+        default:
+            if isPrintable(char) {
+                field.value.append(char)
+                state = .input(field)
+                onStateChanged?()
+            }
+        }
+    }
+
     private func handleBrowsingKey(_ char: Character) {
         switch char {
         case Key.escape:
-            hide()
+            pop()                       // back one level, or close at the root
         case Key.enter:
             activate()
         case Key.backspace:
@@ -108,10 +179,11 @@ final class CommandPanel {
     private func activate() {
         let cmds = filteredCommands
         guard selectedIndex >= 0 && selectedIndex < cmds.count else { return }
+        let depthBefore = stack.count
         cmds[selectedIndex].action()
-        // If the action didn't transition the panel into another state
-        // (e.g. OAuth), close it after running the command.
-        if case .browsing = state {
+        // Auto-close only for terminal commands: if the action navigated
+        // (pushed a submenu, opened input/OAuth, hid), leave it as-is.
+        if case .browsing = state, stack.count == depthBefore {
             hide()
         } else {
             onStateChanged?()
@@ -146,6 +218,8 @@ final class CommandPanel {
         switch state {
         case .browsing:
             (top, lines) = renderBrowsing(height: height, boxWidth: boxWidth, contentWidth: contentWidth)
+        case .input(let field):
+            (top, lines) = renderInput(field, height: height, boxWidth: boxWidth, contentWidth: contentWidth)
         case .oauth(let url, let message):
             (top, lines) = renderSimple(["Sign in to OpenAI", "", message, url, "", "Esc cancel"],
                                         height: height, boxWidth: boxWidth, contentWidth: contentWidth)
@@ -160,8 +234,9 @@ final class CommandPanel {
 
     private func renderBrowsing(height: Int, boxWidth: Int, contentWidth: Int) -> (Int, [String]) {
         let cmds = filteredCommands
+        let nested = !stack.isEmpty
 
-        let header = 3   // top pad + search + blank
+        let header = 4   // top pad + title + search + blank
         let footer = 3   // blank + hint + bottom pad
         let maxRows = max(1, min(cmds.isEmpty ? 1 : cmds.count, height - 4 - header - footer))
 
@@ -175,8 +250,11 @@ final class CommandPanel {
         let boxHeight = header + shownRows + footer
         let top = max(0, (height - boxHeight) / 2)
 
+        let hint = nested ? "↑↓ move   ↵ select   esc back" : "↑↓ move   ↵ run   esc close"
+
         var lines: [String] = []
         lines.append(blankRow(boxWidth: boxWidth))                                              // top pad
+        lines.append(textRow(title, color: Theme.accent, cursor: false, contentWidth: contentWidth, boxWidth: boxWidth))
         lines.append(textRow("Search: \(query)", color: Theme.statusBarText, cursor: true, contentWidth: contentWidth, boxWidth: boxWidth))
         lines.append(blankRow(boxWidth: boxWidth))
 
@@ -189,8 +267,22 @@ final class CommandPanel {
         }
 
         lines.append(blankRow(boxWidth: boxWidth))
-        lines.append(textRow("↑↓ move   ↵ run   esc close", color: Theme.textMuted, cursor: false, contentWidth: contentWidth, boxWidth: boxWidth))
+        lines.append(textRow(hint, color: Theme.textMuted, cursor: false, contentWidth: contentWidth, boxWidth: boxWidth))
         lines.append(blankRow(boxWidth: boxWidth))                                              // bottom pad
+        return (top, lines)
+    }
+
+    private func renderInput(_ field: InputField, height: Int, boxWidth: Int, contentWidth: Int) -> (Int, [String]) {
+        let shown = field.isSecret ? String(repeating: "•", count: field.value.count) : field.value
+        var lines: [String] = []
+        lines.append(blankRow(boxWidth: boxWidth))
+        lines.append(textRow(field.prompt, color: Theme.accent, cursor: false, contentWidth: contentWidth, boxWidth: boxWidth))
+        lines.append(blankRow(boxWidth: boxWidth))
+        lines.append(textRow(shown, color: Theme.statusBarText, cursor: true, contentWidth: contentWidth, boxWidth: boxWidth))
+        lines.append(blankRow(boxWidth: boxWidth))
+        lines.append(textRow("↵ save   esc cancel", color: Theme.textMuted, cursor: false, contentWidth: contentWidth, boxWidth: boxWidth))
+        lines.append(blankRow(boxWidth: boxWidth))
+        let top = max(0, (height - lines.count) / 2)
         return (top, lines)
     }
 
