@@ -251,6 +251,15 @@ class EditorApp {
         guard let string = String(data: data, encoding: .utf8) else { return }
 
         if let panel = commandPanel, panel.isVisible {
+            // Bracketed paste (e.g. an API key): feed the inner text to the
+            // panel, stripping newlines so a pasted \r doesn't submit.
+            if let pasteContent = extractBracketedPaste(string) {
+                for char in pasteContent where !char.isNewline {
+                    panel.handleKey(char)
+                }
+                render()
+                return
+            }
             if string == "\u{1B}[A" {
                 panel.moveSelection(-1)
                 render()
