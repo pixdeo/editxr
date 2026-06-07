@@ -1327,12 +1327,8 @@ class EditorApp {
         switch kind {
         case .bullet:
             return Theme.accent
-        case .todo(let state):
-            switch state {
-            case .unchecked: return Theme.textMuted
-            case .checked: return Theme.textPrimary
-            case .partial: return Theme.textSecondary
-            }
+        case .todo:
+            return Theme.accent
         }
     }
 
