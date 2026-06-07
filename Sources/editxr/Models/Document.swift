@@ -81,31 +81,25 @@ struct Document {
     }
     
     mutating func replaceRange(_ range: (start: CursorPosition, end: CursorPosition), with text: String) {
-        if range.start.line == range.end.line {
-            var line = lines[range.start.line]
-            let startIdx = line.index(line.startIndex, offsetBy: min(range.start.column, line.count))
-            let endIdx = line.index(line.startIndex, offsetBy: min(range.end.column, line.count))
-            line.replaceSubrange(startIdx..<endIdx, with: text)
-            lines[range.start.line] = line
-        } else {
-            let firstLine = lines[range.start.line]
-            let lastLine = lines[range.end.line]
-            let startIdx = firstLine.index(firstLine.startIndex, offsetBy: min(range.start.column, firstLine.count))
-            let endIdx = lastLine.index(lastLine.startIndex, offsetBy: min(range.end.column, lastLine.count))
-            
-            let newContent = String(firstLine[..<startIdx]) + text + String(lastLine[endIdx...])
-            let newLines = newContent.components(separatedBy: "\n")
-            
-            lines.replaceSubrange(range.start.line...range.end.line, with: newLines)
-        }
-        
-        let newLines = text.components(separatedBy: "\n")
-        if newLines.count == 1 {
+        // Merge the kept prefix/suffix around the range with `text`, then split
+        // on newlines into separate array elements. Works for single- and
+        // multi-line ranges alike, and never leaves an embedded "\n" in a line.
+        let firstLine = lines[range.start.line]
+        let lastLine = lines[range.end.line]
+        let startIdx = firstLine.index(firstLine.startIndex, offsetBy: min(range.start.column, firstLine.count))
+        let endIdx = lastLine.index(lastLine.startIndex, offsetBy: min(range.end.column, lastLine.count))
+
+        let newContent = String(firstLine[..<startIdx]) + text + String(lastLine[endIdx...])
+        let newLines = newContent.components(separatedBy: "\n")
+        lines.replaceSubrange(range.start.line...range.end.line, with: newLines)
+
+        let textLines = text.components(separatedBy: "\n")
+        if textLines.count == 1 {
             cursorLine = range.start.line
             cursorColumn = range.start.column + text.count
         } else {
-            cursorLine = range.start.line + newLines.count - 1
-            cursorColumn = newLines.last?.count ?? 0
+            cursorLine = range.start.line + textLines.count - 1
+            cursorColumn = textLines.last?.count ?? 0
         }
         clearSelection()
     }
