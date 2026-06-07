@@ -90,6 +90,12 @@ class EditorApp {
                 self?.state.setTheme(theme)
             })
         }
+        for appearance in Appearance.allCases {
+            let active = state.appearance == appearance
+            cmds.append(PaletteCommand(title: "Appearance: \(appearance.displayName)", shortcut: active ? "current" : "") { [weak self] in
+                self?.state.setAppearance(appearance)
+            })
+        }
         cmds += [
             PaletteCommand(title: "Undo", shortcut: "^U") { [weak self] in self?.state.undo() },
             PaletteCommand(title: "Redo", shortcut: "^G") { [weak self] in self?.state.redo() },

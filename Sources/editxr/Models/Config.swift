@@ -10,6 +10,7 @@ struct Config: Codable {
     // Stored as the raw string so renaming/removing a theme can't make the
     // whole config fail to decode; unknown values just fall back to default.
     var theme: String? = nil
+    var appearance: String? = nil
 
     var llmProvider: LLMProvider = .lmStudio
     var openAIAccessToken: String? = nil

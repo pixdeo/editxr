@@ -98,6 +98,32 @@ enum ThemeName: String, CaseIterable, Codable {
     }
 }
 
+/// Light/dark selection, independent of the palette. `auto` follows the
+/// terminal's detected background; the others force a mode.
+enum Appearance: String, CaseIterable, Codable {
+    case auto
+    case dark
+    case light
+
+    var displayName: String {
+        switch self {
+        case .auto:  return "Auto"
+        case .dark:  return "Dark"
+        case .light: return "Light"
+        }
+    }
+
+    /// Resolve to a concrete mode. `auto` reuses the value detected once at
+    /// launch so we never re-query the TTY while input handling is live.
+    var mode: ColorMode {
+        switch self {
+        case .auto:  return Theme.systemDetected
+        case .dark:  return .dark
+        case .light: return .light
+        }
+    }
+}
+
 /// A resolved set of colour tokens for one theme + mode combination.
 struct ThemePalette {
     let textPrimary, textSecondary, textMuted, accent: String
@@ -181,7 +207,9 @@ struct ThemePalette {
 }
 
 struct Theme {
-    static var mode: ColorMode = .detect() { didSet { refresh() } }
+    /// Background detected once at launch; `Appearance.auto` reuses this.
+    static let systemDetected: ColorMode = .detect()
+    static var mode: ColorMode = systemDetected { didSet { refresh() } }
     static var name: ThemeName = .system { didSet { refresh() } }
 
     /// Active palette, cached so render-loop token access stays allocation-free.
