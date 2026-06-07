@@ -72,7 +72,7 @@ class EditorApp {
             self?.enterReview(with: text)
         }
 
-        llmService.setProvider(state.llmProvider, openAIAccessToken: state.openAIAccessToken)
+        syncLLMService()
 
         commandPanel = CommandPanel()
         commandPanel?.onStateChanged = { [weak self] in
@@ -121,7 +121,7 @@ class EditorApp {
             cmds.append(PaletteCommand(title: "AI provider: OpenAI", shortcut: "") { [weak self] in
                 guard let self = self else { return }
                 self.state.setLLMProvider(.openaiOAuth)
-                self.llmService.setProvider(.openaiOAuth, openAIAccessToken: self.state.openAIAccessToken)
+                self.syncLLMService()
             })
         } else {
             cmds.append(PaletteCommand(title: "Sign in to OpenAI", shortcut: "") { [weak self] in
@@ -131,7 +131,12 @@ class EditorApp {
         cmds.append(PaletteCommand(title: "AI provider: LM Studio", shortcut: "") { [weak self] in
             guard let self = self else { return }
             self.state.setLLMProvider(.lmStudio)
-            self.llmService.setProvider(.lmStudio, openAIAccessToken: self.state.openAIAccessToken)
+            self.syncLLMService()
+        })
+        cmds.append(PaletteCommand(title: "AI provider: Mock (offline)", shortcut: "") { [weak self] in
+            guard let self = self else { return }
+            self.state.setLLMProvider(.mock)
+            self.syncLLMService()
         })
         cmds.append(PaletteCommand(title: "Quit", shortcut: "^Q") { [weak self] in self?.quit() })
         return cmds
@@ -353,6 +358,13 @@ class EditorApp {
         modal.handleCharacter(char)
     }
     
+    /// Push the current provider + all credentials into the LLM service.
+    private func syncLLMService() {
+        llmService.openRouterKey = state.openRouterKey
+        llmService.openRouterModel = state.openRouterModel
+        llmService.setProvider(state.llmProvider, openAIAccessToken: state.openAIAccessToken)
+    }
+
     private func showLLMModal() {
         let doc = state.document
         let startLine: Int, endLine: Int
@@ -694,7 +706,7 @@ class EditorApp {
                 case .success(let tokens):
                     self.state.setOpenAITokens(accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt)
                     self.state.setLLMProvider(.openaiOAuth)
-                    self.llmService.setProvider(.openaiOAuth, openAIAccessToken: self.state.openAIAccessToken)
+                    self.syncLLMService()
                     self.commandPanel?.hide()
                 case .failure(let err):
                     self.commandPanel?.setError(err.localizedDescription)

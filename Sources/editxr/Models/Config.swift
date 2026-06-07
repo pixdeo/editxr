@@ -13,6 +13,8 @@ struct Config: Codable {
     var appearance: String? = nil
 
     var llmProvider: LLMProvider = .lmStudio
+    var openRouterKey: String? = nil
+    var openRouterModel: String? = nil
     var openAIAccessToken: String? = nil
     var openAIRefreshToken: String? = nil
     var openAIExpiresAt: Double? = nil

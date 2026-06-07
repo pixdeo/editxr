@@ -30,6 +30,8 @@ class EditorState: ObservableObject {
     @Published var pendingEdit: PendingEdit? = nil
 
     @Published var llmProvider: LLMProvider = .lmStudio
+    private(set) var openRouterKey: String? = nil
+    private(set) var openRouterModel: String? = nil
     private(set) var openAIAccessToken: String? = nil
     private(set) var openAIRefreshToken: String? = nil
     private(set) var openAIExpiresAt: Double? = nil
@@ -60,6 +62,8 @@ class EditorState: ObservableObject {
         Theme.mode = self.appearance.mode
         self.viewMode = config.renderMarkdown ? .normal : .raw
         self.llmProvider = config.llmProvider
+        self.openRouterKey = config.openRouterKey
+        self.openRouterModel = config.openRouterModel
         self.openAIAccessToken = config.openAIAccessToken
         self.openAIRefreshToken = config.openAIRefreshToken
         self.openAIExpiresAt = config.openAIExpiresAt
@@ -225,6 +229,8 @@ class EditorState: ObservableObject {
         config.appearance = appearance.rawValue
         config.renderMarkdown = viewMode == .normal
         config.llmProvider = llmProvider
+        config.openRouterKey = openRouterKey
+        config.openRouterModel = openRouterModel
         config.openAIAccessToken = openAIAccessToken
         config.openAIRefreshToken = openAIRefreshToken
         config.openAIExpiresAt = openAIExpiresAt
@@ -238,6 +244,16 @@ class EditorState: ObservableObject {
 
     func setLLMProvider(_ provider: LLMProvider) {
         llmProvider = provider
+        saveConfig()
+    }
+
+    func setOpenRouterKey(_ key: String) {
+        openRouterKey = key
+        saveConfig()
+    }
+
+    func setOpenRouterModel(_ model: String) {
+        openRouterModel = model
         saveConfig()
     }
 
