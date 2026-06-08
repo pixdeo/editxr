@@ -98,6 +98,12 @@ class EditorApp {
                     if let n = Int(value.trimmingCharacters(in: .whitespaces)) { self?.state.setLeftMargin(n) }
                 }
             },
+            PaletteCommand(title: "Set scroll-off", shortcut: "\(state.scrollMargin)") { [weak self] in
+                guard let self = self else { return }
+                self.commandPanel?.beginInput(prompt: "Scroll-off (rows from edge, 0–20)", value: "\(self.state.scrollMargin)", isSecret: false) { [weak self] value in
+                    if let n = Int(value.trimmingCharacters(in: .whitespaces)) { self?.state.setScrollOff(n) }
+                }
+            },
         ]
         for theme in ThemeName.allCases {
             let active = state.themeName == theme
@@ -266,7 +272,10 @@ class EditorApp {
         // events so clicks/drags don't leak into the editor as garbage.
         if let delta = mouseScrollDelta(string) {
             if delta != 0 {
-                state.scrollByLines(delta * 3)
+                let size = getTerminalSize()
+                state.scrollViewport(lines: delta * 3,
+                                     viewportHeight: size.height - 3,
+                                     viewportWidth: size.width - gutterWidth())
                 render()
             }
             return

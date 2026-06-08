@@ -8,6 +8,7 @@ struct Config: Codable {
     var scrollPastEnd: Bool? = true
     var fullTable: Bool? = true
     var leftMargin: Int? = 1
+    var scrollOff: Int? = 4
     // Stored as the raw string so renaming/removing a theme can't make the
     // whole config fail to decode; unknown values just fall back to default.
     var theme: String? = nil

@@ -45,7 +45,7 @@ class EditorState: ObservableObject {
     private var undoStack: [DocumentSnapshot] = []
     private var redoStack: [DocumentSnapshot] = []
     private let maxUndoLevels = 100
-    private let scrollMargin = 4
+    var scrollMargin = 4   // scroll-off: keep the cursor this many rows from the edge
     private let scrollMarginX = 8
     
     var onSavedIndicatorChanged: (() -> Void)?
@@ -61,6 +61,7 @@ class EditorState: ObservableObject {
         self.scrollPastEnd = config.scrollPastEnd ?? true
         self.fullTable = config.fullTable ?? true
         self.leftMargin = max(0, min(8, config.leftMargin ?? 1))
+        self.scrollMargin = max(0, min(20, config.scrollOff ?? 4))
         self.themeName = config.theme.flatMap(ThemeName.init(rawValue:)) ?? .system
         self.appearance = config.appearance.flatMap(Appearance.init(rawValue:)) ?? .auto
         Theme.name = self.themeName
@@ -217,21 +218,51 @@ class EditorState: ObservableObject {
         saveConfig()
     }
 
-    /// Move the cursor by `n` lines (the viewport follows); used for wheel scroll.
-    /// When the cursor can't move further (top/bottom of the doc), the leftover
-    /// scrolls the viewport directly, so `scrollPastEnd` keeps scrolling down to
-    /// its limit (the last line at the vertical middle) instead of stopping.
-    func scrollByLines(_ n: Int) {
-        guard !document.lines.isEmpty else { return }
-        document.clearSelection()
-        let before = document.cursorLine
-        let target = max(0, min(document.lines.count - 1, before + n))
-        document.cursorLine = target
-        document.cursorColumn = min(document.cursorColumn, document.lines[target].count)
-        let leftover = (before + n) - target
-        if leftover != 0 {
-            scrollOffset = max(0, scrollOffset + leftover)   // adjustScroll clamps to maxScroll
+    func setScrollOff(_ value: Int) {
+        scrollMargin = max(0, min(20, value))
+        saveConfig()
+    }
+
+    /// Trackpad/wheel scroll: move the viewport directly and leave the cursor
+    /// where it is. The cursor is only dragged once it would come within
+    /// `scrollMargin` (the scroll-off) of the top/bottom edge.
+    func scrollViewport(lines delta: Int, viewportHeight: Int, viewportWidth: Int) {
+        guard !document.lines.isEmpty, delta != 0 else { return }
+        lastViewportWidth = viewportWidth
+        let wrapped = wordWrap && pendingEdit == nil && syntaxHighlighter == nil
+
+        let total = wrapped ? countVisualLines(viewportWidth: viewportWidth) : document.lines.count
+        let endSlack = scrollPastEnd ? viewportHeight / 2 : 0
+        let maxScroll = max(0, total - viewportHeight + endSlack)
+        let newOffset = max(0, min(maxScroll, scrollOffset + delta))
+        let applied = newOffset - scrollOffset
+        scrollOffset = newOffset
+        guard applied != 0 else { return }
+
+        func cursorVisual() -> Int { wrapped ? visualLineForCursor(viewportWidth: viewportWidth) : document.cursorLine }
+
+        if applied > 0 {
+            // Scrolled down: drag the cursor down if it rose above the top margin.
+            let topLimit = scrollOffset + scrollMargin
+            var steps = 0
+            while cursorVisual() < topLimit && steps <= applied {
+                let line = document.cursorLine, col = document.cursorColumn
+                if wrapped { moveDownWrapped() } else { document.moveDown() }
+                if document.cursorLine == line && document.cursorColumn == col { break }
+                steps += 1
+            }
+        } else {
+            // Scrolled up: drag the cursor up if it fell below the bottom margin.
+            let bottomLimit = scrollOffset + viewportHeight - 1 - scrollMargin
+            var steps = 0
+            while cursorVisual() > bottomLimit && steps <= -applied {
+                let line = document.cursorLine, col = document.cursorColumn
+                if wrapped { moveUpWrapped() } else { document.moveUp() }
+                if document.cursorLine == line && document.cursorColumn == col { break }
+                steps += 1
+            }
         }
+        document.clearSelection()
     }
 
     func setTheme(_ name: ThemeName) {
@@ -253,6 +284,7 @@ class EditorState: ObservableObject {
         config.scrollPastEnd = scrollPastEnd
         config.fullTable = fullTable
         config.leftMargin = leftMargin
+        config.scrollOff = scrollMargin
         config.theme = themeName.rawValue
         config.appearance = appearance.rawValue
         config.renderMarkdown = viewMode == .normal
