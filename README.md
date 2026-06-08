@@ -16,6 +16,24 @@ This is a **test** with *markdown*.
 ▪ Item 2
 ```
 
+## Philosophy
+
+editxr is for writing prose and notes in Markdown, in the terminal, without
+ceremony. A few ideas guide it:
+
+- **Render in place.** Markdown should look like Markdown *while you edit it* —
+  headings, emphasis, lists, and tables styled inline — not a split preview
+  pane. The text stays plain and editable; only the presentation is enriched.
+- **Minimal by default.** A clean surface, a single accent colour, and quiet
+  chrome. Settings exist but stay out of the way; the defaults are the point.
+- **AI as a reviewable edit, not a chat.** The LLM rewrites a *section* and
+  shows the result as an inline diff you accept or reject. No conversation
+  thread, no copy-paste — just a proposed change you can see and undo.
+- **Local-first and dependency-free.** Plain Swift, no runtime dependencies, a
+  hand-editable JSON config, and an offline mock so the editing flow works with
+  no backend at all. Bring your own model (local LM Studio, OpenAI, OpenRouter).
+- **Fast and small.** It starts instantly and gets out of the way.
+
 ## Features
 
 - **Live Markdown rendering** — headings, bold/italic, lists, task lists,
