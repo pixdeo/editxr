@@ -130,16 +130,23 @@ final class CommandPanel {
         }
     }
 
+    /// Leave the input field back to its menu, clearing the stale search query
+    /// so subsequent filtering starts fresh.
+    private func returnToMenu() {
+        query = ""
+        selectedIndex = 0
+        state = .browsing
+        onStateChanged?()
+    }
+
     private func handleInputKey(_ char: Character) {
         guard case .input(var field) = state else { return }
         switch char {
         case Key.escape:
-            state = .browsing           // cancel: back to the same menu level
-            onStateChanged?()
+            returnToMenu()              // cancel: back to the same menu level
         case Key.enter:
             field.onSubmit(field.value)
-            state = .browsing           // return to the (unchanged) menu level
-            onStateChanged?()
+            returnToMenu()              // return to the (unchanged) menu level
         case Key.backspace:
             if !field.value.isEmpty {
                 field.value.removeLast()
