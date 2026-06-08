@@ -218,12 +218,20 @@ class EditorState: ObservableObject {
     }
 
     /// Move the cursor by `n` lines (the viewport follows); used for wheel scroll.
+    /// When the cursor can't move further (top/bottom of the doc), the leftover
+    /// scrolls the viewport directly, so `scrollPastEnd` keeps scrolling down to
+    /// its limit (the last line at the vertical middle) instead of stopping.
     func scrollByLines(_ n: Int) {
         guard !document.lines.isEmpty else { return }
         document.clearSelection()
-        let target = max(0, min(document.lines.count - 1, document.cursorLine + n))
+        let before = document.cursorLine
+        let target = max(0, min(document.lines.count - 1, before + n))
         document.cursorLine = target
         document.cursorColumn = min(document.cursorColumn, document.lines[target].count)
+        let leftover = (before + n) - target
+        if leftover != 0 {
+            scrollOffset = max(0, scrollOffset + leftover)   // adjustScroll clamps to maxScroll
+        }
     }
 
     func setTheme(_ name: ThemeName) {
