@@ -131,6 +131,7 @@ class EditorApp {
                 self.state.pageDown(viewportHeight: self.getTerminalSize().height - 3)
             },
             PaletteCommand(title: "AI assist", shortcut: "^Space") { [weak self] in self?.showLLMModal() },
+            PaletteCommand(title: "Export to HTML", shortcut: "^E") { [weak self] in self?.exportToHTML() },
         ]
         cmds.append(PaletteCommand(title: "LLM settings", shortcut: "→") { [weak self] in
             self?.pushLLMSettings()
@@ -382,6 +383,8 @@ class EditorApp {
                 needsRender = true
             case Key.ctrlSpace:
                 showLLMModal()
+            case Key.ctrlE:
+                exportToHTML()
             case Key.enter:
                 state.handleNewline()
                 needsRender = true
@@ -463,6 +466,21 @@ class EditorApp {
         } else if !animating, let timer = spinnerTimer {
             timer.cancel()
             spinnerTimer = nil
+        }
+    }
+
+    /// Render the document to a sibling .html file and open it in the browser.
+    private func exportToHTML() {
+        let html = MarkdownHTML.render(state.document.lines)
+        let htmlPath = (state.filePath as NSString).deletingPathExtension + ".html"
+        do {
+            try html.write(toFile: htmlPath, atomically: true, encoding: .utf8)
+            let p = Process()
+            p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+            p.arguments = [htmlPath]
+            try? p.run()
+        } catch {
+            commandPanel?.setError("Export failed: \(error.localizedDescription)")
         }
     }
 
@@ -2149,6 +2167,7 @@ class EditorApp {
             ("^R", "raw"),
             ("^W", "wrap"),
             ("^L", "lines"),
+            ("^E", "html"),
             ("^U", "undo"),
             ("^G", "redo")
         ]

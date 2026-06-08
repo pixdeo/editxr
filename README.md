@@ -47,6 +47,10 @@ ceremony. A few ideas guide it:
   (`n`). Prompt history is recallable with ↑/↓.
 - **Multiple LLM providers** — LM Studio (local), OpenAI, OpenRouter, and an
   offline **Mock** provider for trying the flow without a backend.
+- **Export to HTML** — render the document to a clean, styled `.html` file and
+  open it in the browser (`Ctrl+E`).
+- **Syntax highlighting** — code files (JSON, Swift, JS/TS, C-family, …) open
+  token-coloured instead of as Markdown.
 - **Command palette** — `Ctrl+P` for commands and settings, with submenus
   for LLM configuration.
 - Word wrap, line numbers, soft tables, undo/redo, and **per-file cursor
@@ -83,6 +87,7 @@ Requires macOS 12+ and a Swift 5.9+ toolchain.
 | `Ctrl+L` | Toggle line numbers |
 | `Ctrl+P` | Command palette / settings |
 | `Ctrl+Space` | AI assist (edit the section) |
+| `Ctrl+E` | Export to HTML (and open it) |
 | `Ctrl+U` / `Ctrl+G` | Undo / Redo |
 | `Ctrl+H` | Delete word backward |
 | `Ctrl+/` | Toggle help bar |
