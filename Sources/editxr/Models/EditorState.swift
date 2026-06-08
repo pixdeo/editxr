@@ -21,6 +21,7 @@ class EditorState: ObservableObject {
     @Published var wordWrap: Bool = true
     @Published var scrollPastEnd: Bool = true
     @Published var fullTable: Bool = true
+    @Published var leftMargin: Int = 1
     @Published var themeName: ThemeName = .system
     @Published var appearance: Appearance = .auto
     @Published var isDirty: Bool = false
@@ -56,6 +57,7 @@ class EditorState: ObservableObject {
         self.wordWrap = config.wordWrap
         self.scrollPastEnd = config.scrollPastEnd ?? true
         self.fullTable = config.fullTable ?? true
+        self.leftMargin = max(0, min(8, config.leftMargin ?? 1))
         self.themeName = config.theme.flatMap(ThemeName.init(rawValue:)) ?? .system
         self.appearance = config.appearance.flatMap(Appearance.init(rawValue:)) ?? .auto
         Theme.name = self.themeName
@@ -207,6 +209,11 @@ class EditorState: ObservableObject {
         saveConfig()
     }
 
+    func setLeftMargin(_ value: Int) {
+        leftMargin = max(0, min(8, value))
+        saveConfig()
+    }
+
     func setTheme(_ name: ThemeName) {
         themeName = name
         Theme.name = name
@@ -225,6 +232,7 @@ class EditorState: ObservableObject {
         config.wordWrap = wordWrap
         config.scrollPastEnd = scrollPastEnd
         config.fullTable = fullTable
+        config.leftMargin = leftMargin
         config.theme = themeName.rawValue
         config.appearance = appearance.rawValue
         config.renderMarkdown = viewMode == .normal

@@ -92,6 +92,12 @@ class EditorApp {
             PaletteCommand(title: "Toggle help bar", shortcut: "^/") { [weak self] in self?.state.toggleHelp() },
             PaletteCommand(title: "Toggle scroll past end", shortcut: "") { [weak self] in self?.state.toggleScrollPastEnd() },
             PaletteCommand(title: "Toggle full table borders", shortcut: "") { [weak self] in self?.state.toggleFullTable() },
+            PaletteCommand(title: "Set left margin", shortcut: "\(state.leftMargin)") { [weak self] in
+                guard let self = self else { return }
+                self.commandPanel?.beginInput(prompt: "Left margin (columns, 0–8)", value: "\(self.state.leftMargin)", isSecret: false) { [weak self] value in
+                    if let n = Int(value.trimmingCharacters(in: .whitespaces)) { self?.state.setLeftMargin(n) }
+                }
+            },
         ]
         for theme in ThemeName.allCases {
             let active = state.themeName == theme
@@ -546,20 +552,21 @@ class EditorApp {
     }
     
     private func gutterWidth() -> Int {
+        // The gutter doubles as the configurable left margin.
         if state.showLineNumbers {
             let maxLineNum = state.document.lines.count
-            return String(maxLineNum).count + 1
+            return state.leftMargin + String(maxLineNum).count + 1
         }
-        return 1
+        return state.leftMargin
     }
-    
+
     private func renderGutter(lineNumber: Int, width: Int) -> String {
         if state.showLineNumbers {
             let numStr = String(lineNumber)
-            let padding = String(repeating: " ", count: width - numStr.count - 1)
+            let padding = String(repeating: " ", count: max(0, width - numStr.count - 1))
             return "\(Theme.gutter)\(padding)\(numStr) \(Theme.reset)"
         }
-        return " "
+        return String(repeating: " ", count: max(0, width))
     }
     
     private func renderEditor(width: Int, height: Int) -> String {
@@ -578,7 +585,8 @@ class EditorApp {
         state.setViewportWidth(contentWidth)
         state.adjustScroll(viewportHeight: contentHeight, viewportWidth: contentWidth)
 
-        var lines: [String] = [padToWidth(renderTopBar(width: width), width: width)]
+        let margin = String(repeating: " ", count: state.leftMargin)
+        var lines: [String] = [padToWidth(margin + renderTopBar(width: width - state.leftMargin), width: width)]
 
         var content: [String]
         switch state.viewMode {
