@@ -636,11 +636,8 @@ class EditorState: ObservableObject {
             scrollOffset = cursorLine - viewportHeight + scrollMargin + 1
         }
         
-        let lastLine = document.lines.count - 1
-        if scrollPastEnd && cursorLine == lastLine {
-            // Let the end of the document rest at the vertical middle (black below).
-            scrollOffset = max(scrollOffset, lastLine - viewportHeight / 2)
-        }
+        // scrollPastEnd allows a little blank room below the last line, reached
+        // by scrolling — no sudden snap to the middle when the cursor hits the end.
         let endSlack = scrollPastEnd ? viewportHeight / 2 : 0
         let maxScroll = max(0, document.lines.count - viewportHeight + endSlack)
         scrollOffset = min(scrollOffset, maxScroll)
@@ -670,9 +667,6 @@ class EditorState: ObservableObject {
         }
         
         let totalVisualLines = countVisualLines(viewportWidth: viewportWidth)
-        if scrollPastEnd && cursorVisualLine == totalVisualLines - 1 {
-            scrollOffset = max(scrollOffset, cursorVisualLine - viewportHeight / 2)
-        }
         let endSlack = scrollPastEnd ? viewportHeight / 2 : 0
         let maxScroll = max(0, totalVisualLines - viewportHeight + endSlack)
         scrollOffset = min(scrollOffset, maxScroll)

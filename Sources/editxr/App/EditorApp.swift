@@ -1014,7 +1014,7 @@ class EditorApp {
                 var widths = [Int](repeating: 1, count: numCols)
                 for cells in rowCells {
                     for c in 0..<numCols where c < cells.count {
-                        widths[c] = max(widths[c], cells[c].displayWidth)
+                        widths[c] = max(widths[c], renderInlineCell(cells[c], base: "").width)
                     }
                 }
 
@@ -1066,11 +1066,41 @@ class EditorApp {
         out += "\(border)│\(Theme.reset)"
         for c in 0..<numCols {
             let raw = c < cells.count ? cells[c] : ""
-            let cell = truncateCell(raw, to: widths[c])
-            let pad = String(repeating: " ", count: max(0, widths[c] - cell.displayWidth))
-            out += " \(style)\(cell)\(Theme.reset)\(pad) \(border)│\(Theme.reset)"
+            let (styled, w) = renderInlineCell(raw, base: style)
+            let pad = String(repeating: " ", count: max(0, widths[c] - w))
+            out += " \(styled)\(Theme.reset)\(pad) \(border)│\(Theme.reset)"
         }
         return truncateToWidth(out, width: width)
+    }
+
+    /// Render a table cell's inline Markdown (code/bold/italic) collapsed,
+    /// returning the styled string and its visible width. `base` is the cell's
+    /// default style, re-applied around each span so colours don't bleed.
+    private func renderInlineCell(_ text: String, base: String) -> (styled: String, width: Int) {
+        let spans = MarkdownLineParser.parse(text)
+        guard !spans.isEmpty else { return ("\(base)\(text)", text.displayWidth) }
+        let chars = Array(text)
+        var styled = ""
+        var width = 0
+        var lastEnd = 0
+        func emit(_ s: String, _ style: String) {
+            styled += "\(style)\(s)"
+            width += s.displayWidth
+        }
+        for span in spans.sorted(by: { $0.rawStart < $1.rawStart }) {
+            if span.rawStart > lastEnd { emit(String(chars[lastEnd..<span.rawStart]), base) }
+            let style: String
+            switch span.kind {
+            case .bold:   style = "\(base)\(Theme.bold)"
+            case .italic: style = "\(base)\(Theme.italic)"
+            case .code:   style = Theme.string
+            default:      style = base
+            }
+            emit(span.content, style)
+            lastEnd = span.rawEnd
+        }
+        if lastEnd < chars.count { emit(String(chars[lastEnd...]), base) }
+        return (styled, width)
     }
 
 
