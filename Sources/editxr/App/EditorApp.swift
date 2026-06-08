@@ -527,7 +527,9 @@ class EditorApp {
     private func render() {
         let size = getTerminalSize()
         let output = renderEditor(width: size.width, height: size.height)
-        print("\u{1B}[H\(output)\u{1B}[0J\u{1B}[\(size.height);\(size.width)H", terminator: "")
+        // Wrap the frame in synchronized-update mode (?2026) so the terminal
+        // shows it atomically — no flicker/tearing while repainting big frames.
+        print("\u{1B}[?2026h\u{1B}[H\(output)\u{1B}[0J\u{1B}[\(size.height);\(size.width)H\u{1B}[?2026l", terminator: "")
         fflush(stdout)
     }
     
@@ -1934,7 +1936,8 @@ class EditorApp {
     
     private func renderTopBar(width: Int) -> String {
         let name = (state.filePath as NSString).lastPathComponent
-        var content = "\(Theme.textSecondary)\(name)\(Theme.reset)"
+        // Markdown glyph (Nerd Font) before the filename.
+        var content = "\(Theme.accent)\u{f48a}\(Theme.reset)  \(Theme.textSecondary)\(name)\(Theme.reset)"
         if let title = documentTitle() {
             content += "\(Theme.textMuted) — \(title)\(Theme.reset)"
         }
