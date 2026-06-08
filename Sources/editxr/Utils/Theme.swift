@@ -238,6 +238,20 @@ struct Theme {
     static var diffAdd: String { mode == .dark ? fg(126, 178, 109) : fg(70, 136, 58) }
     static var diffDel: String { mode == .dark ? fg(200, 110, 110) : fg(176, 64, 64) }
 
+    /// Colour for a syntax token, reusing palette tokens plus two mode-aware
+    /// hues (number, type) so it stays coherent across themes.
+    static func syntaxColor(_ kind: TokenKind) -> String {
+        switch kind {
+        case .keyword, .constant, .property: return accent
+        case .string:                        return string
+        case .comment:                       return textMuted
+        case .punctuation:                   return textSecondary
+        case .number:                        return mode == .dark ? fg(150, 190, 190) : fg(40, 120, 130)
+        case .type:                          return mode == .dark ? fg(206, 184, 130) : fg(150, 110, 40)
+        case .plain:                         return textPrimary
+        }
+    }
+
     static var heading1: String { "\u{1B}[1m\(accent)" }
     static var heading2: String { "\u{1B}[1m\(textPrimary)" }
     static var heading3: String { "\u{1B}[1m\(textSecondary)" }

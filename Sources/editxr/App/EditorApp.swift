@@ -604,7 +604,14 @@ class EditorApp {
         var content: [String]
         switch state.viewMode {
         case .normal:
-            content = renderNormalMode(width: contentWidth, height: contentHeight, gutterWidth: gutter)
+            // Code files get syntax highlighting; Markdown gets live rendering.
+            // While reviewing an AI edit, fall back to the Markdown path so the
+            // inline diff shows.
+            if let hl = state.syntaxHighlighter, state.pendingEdit == nil {
+                content = renderCodeMode(highlighter: hl, width: contentWidth, height: contentHeight, gutterWidth: gutter)
+            } else {
+                content = renderNormalMode(width: contentWidth, height: contentHeight, gutterWidth: gutter)
+            }
         case .raw:
             content = renderRawMode(width: contentWidth, height: contentHeight, gutterWidth: gutter)
         }
@@ -1661,6 +1668,70 @@ class EditorApp {
         return "\(Theme.codeBlock)\(line)\(Theme.reset)"
     }
     
+    /// Syntax-highlighted view for code/other files (non-wrapped). The cursor
+    /// line and selections render plain (consistent with Markdown's editable
+    /// cursor line); other lines are token-coloured.
+    private func renderCodeMode(highlighter: SyntaxHighlighter, width: Int, height: Int, gutterWidth: Int) -> [String] {
+        var output: [String] = []
+        let doc = state.document
+        let selection = doc.selectionRange
+        let startLine = state.scrollOffset
+        let endLine = min(doc.lines.count, startLine + height)
+
+        // Advance highlighter state to the first visible line (block comments
+        // etc. carry over), then tokenise the visible ones.
+        var hlState = HLState()
+        var i = 0
+        while i < startLine && i < doc.lines.count {
+            _ = highlighter.tokens(for: doc.lines[i], state: &hlState)
+            i += 1
+        }
+
+        for i in startLine..<endLine {
+            let line = doc.lines[i]
+            let isCursorLine = i == doc.cursorLine
+            let tokens = highlighter.tokens(for: line, state: &hlState)
+
+            let rendered: String
+            if selection != nil {
+                rendered = renderLineWithSelection(line: line, lineIndex: i, selection: selection, doc: doc)
+            } else if isCursorLine {
+                rendered = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
+            } else {
+                rendered = applyTokens(to: line, tokens: tokens)
+            }
+
+            let gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
+            let scrolled = applyHorizontalScroll(rendered, scrollX: state.scrollX, width: width)
+            output.append(padToWidth(gutter + scrolled, width: gutterWidth + width))
+        }
+        return output
+    }
+
+    /// Build an ANSI-coloured line from syntax tokens, filling gaps with plain.
+    private func applyTokens(to line: String, tokens: [Token]) -> String {
+        let chars = Array(line)
+        guard !tokens.isEmpty else { return "\(Theme.textPrimary)\(line)\(Theme.reset)" }
+        var out = ""
+        var pos = 0
+        for t in tokens.sorted(by: { $0.start < $1.start }) {
+            let start = max(t.start, pos)
+            if start >= chars.count { break }
+            if start > pos {
+                out += "\(Theme.textPrimary)\(String(chars[pos..<start]))"
+            }
+            let end = min(t.start + t.length, chars.count)
+            if end > start {
+                out += "\(Theme.syntaxColor(t.kind))\(String(chars[start..<end]))\(Theme.reset)"
+                pos = end
+            }
+        }
+        if pos < chars.count {
+            out += "\(Theme.textPrimary)\(String(chars[pos..<chars.count]))\(Theme.reset)"
+        }
+        return out
+    }
+
     private func renderRawMode(width: Int, height: Int, gutterWidth: Int) -> [String] {
         var output: [String] = []
         let doc = state.document

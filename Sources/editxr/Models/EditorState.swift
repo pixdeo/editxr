@@ -29,6 +29,8 @@ class EditorState: ObservableObject {
     @Published var scrollOffset: Int = 0
     @Published var scrollX: Int = 0
     @Published var pendingEdit: PendingEdit? = nil
+    /// Syntax highlighter for non-Markdown files (nil → render as Markdown).
+    let syntaxHighlighter: SyntaxHighlighter?
 
     @Published var llmProvider: LLMProvider = .lmStudio
     private(set) var openRouterKey: String? = nil
@@ -51,7 +53,8 @@ class EditorState: ObservableObject {
     init(filePath: String) {
         self.filePath = filePath
         self.document = Document()
-        
+        self.syntaxHighlighter = SyntaxRegistry.forFile(filePath)
+
         let config = Config.load()
         self.showHelp = config.showHelp
         self.wordWrap = config.wordWrap
@@ -614,9 +617,9 @@ class EditorState: ObservableObject {
     }
     
     func adjustScroll(viewportHeight: Int, viewportWidth: Int) {
-        // While reviewing we render non-wrapped, so scrollOffset must be in
-        // document-line units regardless of the wordWrap setting.
-        if wordWrap && pendingEdit == nil {
+        // We render non-wrapped while reviewing a diff and for code files, so
+        // scrollOffset must be in document-line units there.
+        if wordWrap && pendingEdit == nil && syntaxHighlighter == nil {
             adjustScrollWrapped(viewportHeight: viewportHeight, viewportWidth: viewportWidth)
             return
         }
