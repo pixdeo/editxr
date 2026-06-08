@@ -126,6 +126,17 @@ Settings (theme, appearance, provider, keys) persist to
 `~/.config/editxr/config.json`. Per-file cursor positions are stored in
 `~/.config/editxr/positions.json`.
 
+## Roadmap
+
+- [ ] **Inline image rendering** — draw Markdown images (`![alt](pic.png)`)
+  directly in the editor using terminal graphics protocols (iTerm2 inline
+  images / Kitty graphics / Sixel), with a block-character fallback for
+  terminals without support. Needs terminal-capability detection, image
+  decoding (via the OS image APIs, no extra deps), and reserving / clearing the
+  image's cell rectangle as the view scrolls. (Video isn't a terminal protocol —
+  it would be frame-by-frame image playback; animated GIFs already animate in
+  iTerm2.)
+
 ## License
 
 MIT © Pixdeo LTD. See [LICENSE](LICENSE).

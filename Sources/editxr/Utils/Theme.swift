@@ -498,7 +498,17 @@ struct Theme {
     static var heading1: String { "\u{1B}[1m\(accent)" }
     static var heading2: String { "\u{1B}[1m\(textPrimary)" }
     static var heading3: String { "\u{1B}[1m\(textSecondary)" }
-    static var codeBlock: String { textMuted }
+    static var codeBlock: String { textSecondary }
+
+    /// Subtle surface behind fenced code blocks: a small offset from the editor
+    /// background (lighter on dark themes, darker on light ones).
+    static var codeBlockBg: String {
+        let (r, g, b) = ThemePalette.backgroundRGB(name, mode)
+        let lum = (r * 299 + g * 587 + b * 114) / 1000
+        let d = lum < 128 ? 18 : -12
+        func c(_ v: Int) -> Int { max(0, min(255, v + d)) }
+        return bg(c(r), c(g), c(b))
+    }
 
     static let reset = "\u{1B}[0m"
     static let bold = "\u{1B}[1m"

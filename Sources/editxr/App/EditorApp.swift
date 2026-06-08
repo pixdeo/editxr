@@ -1009,7 +1009,7 @@ class EditorApp {
                     renderedLine = "\(Theme.textMuted)\(line)\(Theme.reset)"
                 }
             } else if inCodeBlock || isCodeDelimiter {
-                renderedLine = renderCodeBlockLine(line: line, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn)
+                renderedLine = renderCodeBlockLine(line: line, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn, width: width)
             } else {
                 if let quote = parseQuoteLine(line) {
                     if isCursorLine {
@@ -1166,8 +1166,9 @@ class EditorApp {
         if role == .separator || role == .top || role == .bottom {
             let (lead, junction, tail): (String, String, String)
             switch role {
-            case .top: (lead, junction, tail) = ("┌", "┬", "┐")
-            case .bottom: (lead, junction, tail) = ("└", "┴", "┘")
+            // Rounded outer corners (Claude Code style); junctions stay square.
+            case .top: (lead, junction, tail) = ("╭", "┬", "╮")
+            case .bottom: (lead, junction, tail) = ("╰", "┴", "╯")
             default: (lead, junction, tail) = ("├", "┼", "┤")
             }
             out += "\(border)\(lead)"
@@ -1296,9 +1297,10 @@ class EditorApp {
                     segmentStart: segmentStart,
                     selection: selection,
                     doc: doc,
-                    spans: spans
+                    spans: spans,
+                    width: width
                 )
-                
+
                 let gutter = segmentIndex == 0
                     ? renderGutter(lineNumber: i + 1, width: gutterWidth)
                     : String(repeating: " ", count: gutterWidth)
@@ -1411,13 +1413,14 @@ class EditorApp {
         segmentStart: Int,
         selection: (start: CursorPosition, end: CursorPosition)?,
         doc: Document,
-        spans: [MarkdownSpan]
+        spans: [MarkdownSpan],
+        width: Int
     ) -> String {
         switch mode {
         case .selection:
             return renderSegmentWithSelection(segment: segment, lineIndex: lineIndex, segmentStart: segmentStart, selection: selection, doc: doc)
         case .codeBlock:
-            return renderCodeBlockSegment(segment: segment, cursorColumn: localCursor)
+            return renderCodeBlockSegment(segment: segment, cursorColumn: localCursor, width: width)
         case .raw:
             return renderLineRaw(line: segment, cursorColumn: localCursor)
         case .heading(let style):
@@ -1786,15 +1789,25 @@ class EditorApp {
         return before + selStart + selected + selEnd + after
     }
     
-    private func renderCodeBlockSegment(segment: String, cursorColumn: Int) -> String {
+    private func renderCodeBlockSegment(segment: String, cursorColumn: Int, width: Int) -> String {
+        let bg = Theme.codeBlockBg
+        let fg = Theme.codeBlock
+        let body: String
+        let visible: Int
         if cursorColumn >= 0 {
             let col = min(cursorColumn, segment.count)
             let before = String(segment.prefix(col))
             let charAtCursor = col < segment.count ? String(segment[segment.index(segment.startIndex, offsetBy: col)]) : " "
             let after = col < segment.count ? String(segment.dropFirst(col + 1)) : ""
-            return "\(Theme.codeBlock)\(before)\(Theme.inverse)\(charAtCursor)\(Theme.reset)\(Theme.codeBlock)\(after)\(Theme.reset)"
+            body = "\(bg)\(fg)\(before)\(Theme.inverse)\(charAtCursor)\(Theme.reset)\(bg)\(fg)\(after)"
+            visible = before.displayWidth + 1 + after.displayWidth
+        } else {
+            body = "\(bg)\(fg)\(segment)"
+            visible = segment.displayWidth
         }
-        return "\(Theme.codeBlock)\(segment)\(Theme.reset)"
+        // Fill the rest of the content width so the block reads as a panel.
+        let pad = max(0, width - visible)
+        return "\(body)\(bg)\(String(repeating: " ", count: pad))\(Theme.reset)"
     }
     
     private func isInsideCodeBlock(beforeLine: Int, doc: Document) -> Bool {
@@ -1807,15 +1820,24 @@ class EditorApp {
         return inside
     }
     
-    private func renderCodeBlockLine(line: String, isCursorLine: Bool, cursorColumn: Int) -> String {
+    private func renderCodeBlockLine(line: String, isCursorLine: Bool, cursorColumn: Int, width: Int) -> String {
+        let bg = Theme.codeBlockBg
+        let fg = Theme.codeBlock
+        let body: String
+        let visible: Int
         if isCursorLine {
             let col = min(cursorColumn, line.count)
             let before = String(line.prefix(col))
             let charAtCursor = col < line.count ? String(line[line.index(line.startIndex, offsetBy: col)]) : " "
             let after = col < line.count ? String(line.dropFirst(col + 1)) : ""
-            return "\(Theme.codeBlock)\(before)\(Theme.inverse)\(charAtCursor)\(Theme.reset)\(Theme.codeBlock)\(after)\(Theme.reset)"
+            body = "\(bg)\(fg)\(before)\(Theme.inverse)\(charAtCursor)\(Theme.reset)\(bg)\(fg)\(after)"
+            visible = before.displayWidth + 1 + after.displayWidth
+        } else {
+            body = "\(bg)\(fg)\(line)"
+            visible = line.displayWidth
         }
-        return "\(Theme.codeBlock)\(line)\(Theme.reset)"
+        let pad = max(0, width - visible)
+        return "\(body)\(bg)\(String(repeating: " ", count: pad))\(Theme.reset)"
     }
     
     /// Syntax-highlighted view for code/other files (non-wrapped). The cursor
