@@ -230,10 +230,13 @@ class EditorApp {
         print("\u{1B}[?1049h", terminator: "")
         print("\u{1B}[?25l", terminator: "")
         print("\u{1B}[?2004h", terminator: "")
+        // Mouse reporting (button events + SGR coords) for trackpad/wheel scroll.
+        print("\u{1B}[?1000h\u{1B}[?1006h", terminator: "")
         fflush(stdout)
     }
-    
+
     private func exitAlternateScreen() {
+        print("\u{1B}[?1000l\u{1B}[?1006l", terminator: "")
         print("\u{1B}[?2004l", terminator: "")
         print("\u{1B}[?25h", terminator: "")
         print("\u{1B}[?1049l", terminator: "")
@@ -258,6 +261,16 @@ class EditorApp {
     private func handleInput() {
         let data = FileHandle.standardInput.availableData
         guard let string = String(data: data, encoding: .utf8) else { return }
+
+        // Trackpad / mouse-wheel scroll (SGR mouse reporting). Consume all mouse
+        // events so clicks/drags don't leak into the editor as garbage.
+        if let delta = mouseScrollDelta(string) {
+            if delta != 0 {
+                state.scrollByLines(delta * 3)
+                render()
+            }
+            return
+        }
 
         if let panel = commandPanel, panel.isVisible {
             // Bracketed paste (e.g. an API key): feed the inner text to the
@@ -2027,6 +2040,20 @@ class EditorApp {
 
     private func renderReviewHintBar(width: Int) -> String {
         return "\(Theme.diffAdd)y/⇥ \(Theme.textMuted)accept   \(Theme.diffDel)n/esc \(Theme.textMuted)reject   \(Theme.textMuted)AI edit review\(Theme.reset)"
+    }
+
+    /// Parse SGR mouse reports (CSI < b ; x ; y M/m). Returns the net wheel
+    /// delta (+down / −up) if the input is mouse data, or nil if it isn't.
+    /// Non-wheel mouse events (clicks/drags) yield 0 (consumed, ignored).
+    private func mouseScrollDelta(_ string: String) -> Int? {
+        guard string.contains("\u{1B}[<") else { return nil }
+        var delta = 0
+        for part in string.components(separatedBy: "\u{1B}[<").dropFirst() {
+            let button = Int(part.prefix { $0.isNumber }) ?? -1
+            if button == 64 { delta -= 1 }       // wheel up
+            else if button == 65 { delta += 1 }  // wheel down
+        }
+        return delta
     }
 
     private func extractBracketedPaste(_ input: String) -> String? {

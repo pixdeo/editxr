@@ -214,6 +214,15 @@ class EditorState: ObservableObject {
         saveConfig()
     }
 
+    /// Move the cursor by `n` lines (the viewport follows); used for wheel scroll.
+    func scrollByLines(_ n: Int) {
+        guard !document.lines.isEmpty else { return }
+        document.clearSelection()
+        let target = max(0, min(document.lines.count - 1, document.cursorLine + n))
+        document.cursorLine = target
+        document.cursorColumn = min(document.cursorColumn, document.lines[target].count)
+    }
+
     func setTheme(_ name: ThemeName) {
         themeName = name
         Theme.name = name
