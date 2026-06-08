@@ -59,6 +59,8 @@ class EditorApp {
     private var reviewRange: (startLine: Int, endLine: Int)?
     /// Drives re-renders so the LLM spinner animates while processing.
     private var spinnerTimer: DispatchSourceTimer?
+    /// Last OSC 11 background sequence pushed to the terminal (avoid re-emitting).
+    private var lastBackgroundOSC: String?
 
     init(state: EditorState) {
         self.state = state
@@ -105,21 +107,14 @@ class EditorApp {
                 }
             },
         ]
-        for theme in ThemeName.allCases {
-            let active = state.themeName == theme
-            cmds.append(PaletteCommand(title: "Theme: \(theme.displayName)", shortcut: active ? "current" : "") { [weak self] in
-                self?.state.setTheme(theme)
-            })
-        }
-        for appearance in Appearance.allCases {
-            let active = state.appearance == appearance
-            cmds.append(PaletteCommand(title: "Appearance: \(appearance.displayName)", shortcut: active ? "current" : "") { [weak self] in
-                self?.state.setAppearance(appearance)
-            })
-        }
+        cmds.append(PaletteCommand(title: "Themes", shortcut: "→") { [weak self] in
+            self?.pushThemeSettings()
+        })
         cmds += [
+            PaletteCommand(title: "Find", shortcut: "^F") { [weak self] in self?.state.beginSearch() },
+            PaletteCommand(title: "Find next", shortcut: "^G") { [weak self] in self?.state.searchNext() },
             PaletteCommand(title: "Undo", shortcut: "^U") { [weak self] in self?.state.undo() },
-            PaletteCommand(title: "Redo", shortcut: "^G") { [weak self] in self?.state.redo() },
+            PaletteCommand(title: "Redo", shortcut: "^Y") { [weak self] in self?.state.redo() },
             PaletteCommand(title: "Go to top", shortcut: "Home") { [weak self] in self?.state.goToTop() },
             PaletteCommand(title: "Go to bottom", shortcut: "End") { [weak self] in self?.state.goToBottom() },
             PaletteCommand(title: "Page up", shortcut: "PgUp") { [weak self] in
@@ -137,6 +132,35 @@ class EditorApp {
             self?.pushLLMSettings()
         })
         cmds.append(PaletteCommand(title: "Quit", shortcut: "^Q") { [weak self] in self?.quit() })
+        return cmds
+    }
+
+    // MARK: - Theme menu
+
+    private func pushThemeSettings() {
+        commandPanel?.push(title: "Themes", commands: themeMenuCommands())
+    }
+
+    /// Theme + appearance picker. Selecting keeps the panel open and refreshes
+    /// the list so the change previews live and the "current" marker follows.
+    private func themeMenuCommands() -> [PaletteCommand] {
+        var cmds: [PaletteCommand] = []
+        for theme in ThemeName.allCases {
+            let active = state.themeName == theme
+            cmds.append(PaletteCommand(title: theme.displayName, shortcut: active ? "current" : "", keepsOpen: true) { [weak self] in
+                guard let self = self else { return }
+                self.state.setTheme(theme)
+                self.commandPanel?.replaceCommands(self.themeMenuCommands())
+            })
+        }
+        for appearance in Appearance.allCases {
+            let active = state.appearance == appearance
+            cmds.append(PaletteCommand(title: "Appearance: \(appearance.displayName)", shortcut: active ? "current" : "", keepsOpen: true) { [weak self] in
+                guard let self = self else { return }
+                self.state.setAppearance(appearance)
+                self.commandPanel?.replaceCommands(self.themeMenuCommands())
+            })
+        }
         return cmds
     }
 
@@ -243,6 +267,8 @@ class EditorApp {
     }
 
     private func exitAlternateScreen() {
+        // Restore the terminal's default foreground/background (undo OSC 10/11).
+        print("\u{1B}]110\u{1B}\\\u{1B}]111\u{1B}\\", terminator: "")
         print("\u{1B}[?1000l\u{1B}[?1006l", terminator: "")
         print("\u{1B}[?2004l", terminator: "")
         print("\u{1B}[?25h", terminator: "")
@@ -302,6 +328,16 @@ class EditorApp {
                 render()
                 return
             }
+            if string == "\u{1B}[C" {        // right: enter / activate
+                panel.activateSelected()
+                render()
+                return
+            }
+            if string == "\u{1B}[D" {        // left: back one level
+                panel.goBack()
+                render()
+                return
+            }
             for char in string {
                 if char == Key.ctrlP {
                     toggleCommandPanel()
@@ -332,6 +368,11 @@ class EditorApp {
             return
         }
 
+        if state.searchActive {
+            handleSearchInput(string)
+            return
+        }
+
         if let pasteContent = extractBracketedPaste(string) {
             handlePaste(pasteContent)
             render()
@@ -340,7 +381,13 @@ class EditorApp {
 
         var needsRender = false
 
-        for char in string {
+        // Index-based so Ctrl+F can hand the rest of a coalesced buffer (e.g.
+        // "^F" + the typed query arriving in one read) to the search bar.
+        let chars = Array(string)
+        var ci = 0
+        while ci < chars.count {
+            let char = chars[ci]
+            ci += 1
             if arrowKeyParser.parse(character: char) {
                 if let key = arrowKeyParser.arrowKey {
                     arrowKeyParser.arrowKey = nil
@@ -348,7 +395,7 @@ class EditorApp {
                 }
                 continue
             }
-            
+
             switch char {
             case Key.ctrlQ, Key.ctrlD:
                 quit()
@@ -375,8 +422,16 @@ class EditorApp {
             case Key.ctrlU:
                 state.undo()
                 needsRender = true
-            case Key.ctrlG:
+            case Key.ctrlY:
                 state.redo()
+                needsRender = true
+            case Key.ctrlF:
+                state.beginSearch()
+                let rest = String(chars[ci...])
+                if rest.isEmpty { render() } else { handleSearchInput(rest) }
+                return
+            case Key.ctrlG:
+                state.searchNext()
                 needsRender = true
             case Key.ctrlW:
                 state.toggleWordWrap()
@@ -529,6 +584,31 @@ class EditorApp {
         }
     }
     
+    private func handleSearchInput(_ string: String) {
+        // Bare Esc cancels; arrow/escape sequences step through matches.
+        if string == "\u{1B}" { state.cancelSearch(); render(); return }
+        if string == "\u{1B}[A" || string == "\u{1B}[C" { state.searchNext(); render(); return }
+        if string == "\u{1B}[B" || string == "\u{1B}[D" { state.searchPrevious(); render(); return }
+        if string.first == Key.escape && string.count > 1 { return }
+        for char in string {
+            switch char {
+            case Key.enter:
+                state.commitSearch()
+                render()
+                return
+            case Key.backspace:
+                state.backspaceSearch()
+            case Key.ctrlG, Key.ctrlF:
+                state.searchNext()
+            case Key.ctrlS:
+                state.searchPrevious()
+            default:
+                if isPrintable(char) { state.appendSearchChar(char) }
+            }
+        }
+        render()
+    }
+
     private func handleArrowKey(_ key: ArrowKey) {
         let size = getTerminalSize()
         let viewportHeight = size.height - 3
@@ -571,12 +651,23 @@ class EditorApp {
     }
     
     private func render() {
+        applyTerminalBackground()
         let size = getTerminalSize()
         let output = renderEditor(width: size.width, height: size.height)
         // Wrap the frame in synchronized-update mode (?2026) so the terminal
         // shows it atomically — no flicker/tearing while repainting big frames.
         print("\u{1B}[?2026h\u{1B}[H\(output)\u{1B}[0J\u{1B}[\(size.height);\(size.width)H\u{1B}[?2026l", terminator: "")
         fflush(stdout)
+    }
+
+    /// Set the terminal background to the active theme's surface colour (OSC 11)
+    /// so dark/light themes actually change the canvas. Emitted only when it
+    /// changes; restored to the terminal default on exit.
+    private func applyTerminalBackground() {
+        let osc = ThemePalette.backgroundOSC(Theme.name, Theme.mode)
+        guard osc != lastBackgroundOSC else { return }
+        lastBackgroundOSC = osc
+        print(osc, terminator: "")
     }
     
     private func clearScreen() {
@@ -654,7 +745,7 @@ class EditorApp {
         }
         
         lines.append(padToWidth(renderStatusBar(width: width), width: width))
-        
+
         if state.isReviewing {
             lines.append(padToWidth(renderReviewHintBar(width: width), width: width))
         } else if state.showHelp {
@@ -1596,8 +1687,10 @@ class EditorApp {
                 
                 if globalPos >= span.contentStart && globalPos < span.contentEnd {
                     switch span.kind {
-                    case .bold: style = Theme.bold
-                    case .italic: style = Theme.italic
+                    // Pair emphasis with an explicit colour so it never falls back
+                    // to the terminal's (possibly mismatched) bold/default colour.
+                    case .bold: style = Theme.textPrimary + Theme.bold
+                    case .italic: style = Theme.textPrimary + Theme.italic
                     case .code: style = Theme.string
                     case .heading1: style = Theme.heading1
                     case .heading2: style = Theme.heading2
@@ -1916,14 +2009,14 @@ class EditorApp {
             
             let style: String
             switch span.kind {
-            case .bold: style = Theme.bold
-            case .italic: style = Theme.italic
+            case .bold: style = Theme.textPrimary + Theme.bold
+            case .italic: style = Theme.textPrimary + Theme.italic
             case .code: style = Theme.string
             case .heading1: style = Theme.heading1
             case .heading2: style = Theme.heading2
             case .heading3: style = Theme.heading3
             }
-            
+
             result += renderWithCursor(text: span.content, style: style, visualPos: &visualPos, cursorCol: visualCursorCol)
             lastEnd = span.rawEnd
         }
@@ -2139,21 +2232,44 @@ class EditorApp {
     private func renderStatusBar(width: Int) -> String {
         let doc = state.document
 
-        var leftParts: [String] = []
+        // Build the left segment, tracking visible width separately from the
+        // styled string (escape sequences and the ◉ glyph aren't 1 char each).
+        var left = ""
+        var leftVisible = 0
+        func append(_ styled: String, visible: Int) {
+            if leftVisible > 0 { left += " "; leftVisible += 1 }
+            left += styled
+            leftVisible += visible
+        }
+
         if state.viewMode == .raw {
-            leftParts.append("[RAW]")
+            append("[RAW]", visible: 5)
         }
         if state.showSavedIndicator {
-            leftParts.append("Saved")
+            append("Saved", visible: 5)
         } else if state.isDirty {
-            leftParts.append("\(Theme.accent)◉\(Theme.statusBarText)")
+            append("\(Theme.accent)◉\(Theme.statusBarText)", visible: 1)
         }
-        let left = leftParts.joined(separator: " ")
-        
-        let leftVisibleLen = state.isDirty && !state.showSavedIndicator ? leftParts.reduce(0) { $0 + ($1.contains("◉") ? 1 : $1.count) } + leftParts.count - 1 : left.count
+        // While finding, the query lives inline on the status bar.
+        if state.searchActive {
+            let q = state.searchQuery
+            let info: String
+            if q.isEmpty {
+                info = ""
+            } else if state.searchMatches.isEmpty {
+                info = "  \(Theme.textMuted)no matches\(Theme.statusBarText)"
+            } else {
+                info = "  \(Theme.textMuted)\(state.searchIndex + 1)/\(state.searchMatches.count)\(Theme.statusBarText)"
+            }
+            let infoVisible = q.isEmpty ? 0 : (state.searchMatches.isEmpty ? 12 : 2 + "\(state.searchIndex + 1)/\(state.searchMatches.count)".count)
+            // Block cursor; restore status-bar styling after the reset.
+            let cursor = "\(Theme.inverse) \(Theme.reset)\(Theme.statusBarBg)\(Theme.statusBarText)"
+            append("\(Theme.accent)search:\(Theme.statusBarText)\(q)\(cursor)\(info)", visible: 7 + q.count + 1 + infoVisible)
+        }
+
         let right = "\(doc.wordCount) words | Ln \(doc.cursorLine + 1), Col \(doc.cursorColumn + 1)"
         let contentWidth = width - 1
-        let padding = contentWidth - leftVisibleLen - right.count
+        let padding = contentWidth - leftVisible - right.count
         let spaces = String(repeating: " ", count: max(0, padding))
         return "\(Theme.accent)▌\(Theme.statusBarBg)\(Theme.statusBarText)\(left)\(spaces)\(right)\(Theme.reset)"
     }
@@ -2168,8 +2284,10 @@ class EditorApp {
             ("^W", "wrap"),
             ("^L", "lines"),
             ("^E", "html"),
+            ("^F", "find"),
+            ("^G", "next"),
             ("^U", "undo"),
-            ("^G", "redo")
+            ("^Y", "redo")
         ]
         
         var parts: [String] = []

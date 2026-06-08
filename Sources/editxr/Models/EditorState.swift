@@ -11,6 +11,13 @@ struct DocumentSnapshot {
     let cursorColumn: Int
 }
 
+/// A single find match: a line and a Character-offset range within it.
+struct SearchMatch {
+    let line: Int
+    let column: Int
+    let length: Int
+}
+
 class EditorState: ObservableObject {
     let filePath: String
     @Published var document: Document
@@ -29,6 +36,15 @@ class EditorState: ObservableObject {
     @Published var scrollOffset: Int = 0
     @Published var scrollX: Int = 0
     @Published var pendingEdit: PendingEdit? = nil
+
+    // Incremental find (Ctrl+F / Ctrl+G). `searchActive` drives the input bar;
+    // the query + match list persist after committing so Ctrl+G keeps stepping.
+    @Published var searchActive: Bool = false
+    @Published var searchQuery: String = ""
+    @Published var searchMatches: [SearchMatch] = []
+    @Published var searchIndex: Int = 0
+    private var searchOrigin: CursorPosition = CursorPosition(line: 0, column: 0)
+
     /// Syntax highlighter for non-Markdown files (nil → render as Markdown).
     let syntaxHighlighter: SyntaxHighlighter?
 
@@ -67,6 +83,7 @@ class EditorState: ObservableObject {
         Theme.name = self.themeName
         Theme.mode = self.appearance.mode
         self.viewMode = config.renderMarkdown ? .normal : .raw
+        self.showLineNumbers = config.showLineNumbers ?? false
         self.llmProvider = config.llmProvider
         self.openRouterKey = config.openRouterKey
         self.openRouterModel = config.openRouterModel
@@ -190,6 +207,7 @@ class EditorState: ObservableObject {
     
     func toggleLineNumbers() {
         showLineNumbers.toggle()
+        saveConfig()
     }
     
     func toggleHelp() {
@@ -281,6 +299,7 @@ class EditorState: ObservableObject {
         var config = Config.load()
         config.showHelp = showHelp
         config.wordWrap = wordWrap
+        config.showLineNumbers = showLineNumbers
         config.scrollPastEnd = scrollPastEnd
         config.fullTable = fullTable
         config.leftMargin = leftMargin
@@ -760,6 +779,101 @@ class EditorState: ObservableObject {
         document.cursorColumn = min(document.cursorColumn, document.currentLineText.count)
         document.clearSelection()
         scrollOffset = min(max(0, document.lines.count - viewportHeight), scrollOffset + pageSize)
+    }
+
+    // MARK: - Find
+
+    /// Open the find bar, anchoring "first match" search to the current cursor.
+    func beginSearch() {
+        searchActive = true
+        searchOrigin = document.cursorPosition
+        searchQuery = ""
+        searchMatches = []
+        searchIndex = 0
+    }
+
+    func appendSearchChar(_ char: Character) {
+        searchQuery.append(char)
+        refreshSearch(jumpFromOrigin: true)
+    }
+
+    func backspaceSearch() {
+        guard !searchQuery.isEmpty else { return }
+        searchQuery.removeLast()
+        refreshSearch(jumpFromOrigin: true)
+    }
+
+    /// Close the find bar but keep the query/matches so Ctrl+G keeps working.
+    func commitSearch() {
+        searchActive = false
+    }
+
+    /// Abandon the find: clear bar, query, matches, and the match highlight.
+    func cancelSearch() {
+        searchActive = false
+        searchQuery = ""
+        searchMatches = []
+        searchIndex = 0
+        document.clearSelection()
+    }
+
+    /// Jump to the next match (wraps). Recomputes against the live document so
+    /// edits between presses can't leave a stale index.
+    func searchNext() { stepSearch(forward: true) }
+    func searchPrevious() { stepSearch(forward: false) }
+
+    private func stepSearch(forward: Bool) {
+        guard !searchQuery.isEmpty else { return }
+        let matches = computeMatches(searchQuery)
+        searchMatches = matches
+        guard !matches.isEmpty else { return }
+        searchIndex = (searchIndex + (forward ? 1 : -1) + matches.count) % matches.count
+        jumpTo(matches[searchIndex])
+    }
+
+    /// Recompute matches for the current query; jump to the first match at or
+    /// after the search origin (used while typing in the bar).
+    private func refreshSearch(jumpFromOrigin: Bool) {
+        let matches = computeMatches(searchQuery)
+        searchMatches = matches
+        guard !matches.isEmpty else {
+            searchIndex = 0
+            document.clearSelection()
+            return
+        }
+        if jumpFromOrigin {
+            searchIndex = matches.firstIndex { m in
+                m.line > searchOrigin.line || (m.line == searchOrigin.line && m.column >= searchOrigin.column)
+            } ?? 0
+        } else {
+            searchIndex = min(searchIndex, matches.count - 1)
+        }
+        jumpTo(matches[searchIndex])
+    }
+
+    /// All case-insensitive matches of `query`, in document order. Columns are
+    /// Character offsets to match the editor's cursor model.
+    private func computeMatches(_ query: String) -> [SearchMatch] {
+        guard !query.isEmpty else { return [] }
+        var result: [SearchMatch] = []
+        for (li, line) in document.lines.enumerated() {
+            var from = line.startIndex
+            while let r = line.range(of: query, options: [.caseInsensitive], range: from..<line.endIndex) {
+                let col = line.distance(from: line.startIndex, to: r.lowerBound)
+                let len = line.distance(from: r.lowerBound, to: r.upperBound)
+                result.append(SearchMatch(line: li, column: col, length: len))
+                from = r.isEmpty ? line.index(after: r.lowerBound) : r.upperBound
+                if from >= line.endIndex { break }
+            }
+        }
+        return result
+    }
+
+    /// Move the cursor to a match and select it so it renders highlighted.
+    private func jumpTo(_ match: SearchMatch) {
+        document.cursorLine = match.line
+        document.cursorColumn = match.column + match.length
+        document.selectionAnchor = CursorPosition(line: match.line, column: match.column)
     }
 
     func goToTop() {

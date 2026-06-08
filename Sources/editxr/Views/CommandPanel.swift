@@ -3,6 +3,9 @@ import Foundation
 struct PaletteCommand {
     let title: String
     let shortcut: String
+    /// Keep the panel open after running (e.g. live theme preview) instead of
+    /// auto-closing like a terminal command.
+    var keepsOpen: Bool = false
     let action: () -> Void
 }
 
@@ -48,6 +51,13 @@ final class CommandPanel {
         self.commands = commands
         self.title = "Commands"
         self.stack = []
+    }
+
+    /// Replace the current level's commands in place (keeping title, stack, and
+    /// selection) — used to refresh markers after a keep-open action.
+    func replaceCommands(_ commands: [PaletteCommand]) {
+        self.commands = commands
+        onStateChanged?()
     }
 
     func show() {
@@ -107,6 +117,19 @@ final class CommandPanel {
         guard !query.isEmpty else { return commands }
         let q = query.lowercased()
         return commands.filter { $0.title.lowercased().contains(q) }
+    }
+
+    /// Enter / run the selected command (right arrow, mirrors Enter).
+    func activateSelected() {
+        guard case .browsing = state else { return }
+        activate()
+    }
+
+    /// Step back one submenu level (left arrow). No-op at the root so it can't
+    /// accidentally close the panel.
+    func goBack() {
+        guard case .browsing = state, !stack.isEmpty else { return }
+        pop()
     }
 
     func moveSelection(_ delta: Int) {
@@ -186,11 +209,13 @@ final class CommandPanel {
     private func activate() {
         let cmds = filteredCommands
         guard selectedIndex >= 0 && selectedIndex < cmds.count else { return }
+        let cmd = cmds[selectedIndex]
         let depthBefore = stack.count
-        cmds[selectedIndex].action()
+        cmd.action()
         // Auto-close only for terminal commands: if the action navigated
-        // (pushed a submenu, opened input/OAuth, hid), leave it as-is.
-        if case .browsing = state, stack.count == depthBefore {
+        // (pushed a submenu, opened input/OAuth, hid) or asked to stay open
+        // (e.g. live theme preview), leave it as-is.
+        if case .browsing = state, stack.count == depthBefore, !cmd.keepsOpen {
             hide()
         } else {
             onStateChanged?()

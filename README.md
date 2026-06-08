@@ -39,9 +39,10 @@ ceremony. A few ideas guide it:
 - **Live Markdown rendering** — headings, bold/italic, lists, task lists,
   tables, blockquotes, code blocks, and YAML frontmatter, rendered in place
   while staying editable.
-- **Themes** — `System`, `Clay`, `Mono`, and `Monokai`, each with an
-  independent appearance mode (`Auto` / `Dark` / `Light`). Auto follows the
-  terminal background.
+- **Themes** — `System`, `Clay`, `Mono`, `One Dark Pro`, `Dracula`, `GitHub`,
+  `Monokai`, `Solarized`, `Nord`, `Gruvbox`, `Tokyo Night`, and `Catppuccin`,
+  picked from a nested `Themes` palette and each with an independent appearance
+  mode (`Auto` / `Dark` / `Light`). Auto follows the terminal background.
 - **AI section editing** — rewrite the selection (or the current block) with
   an LLM, shown as a red/green **inline diff** you accept (`y`) or reject
   (`n`). Prompt history is recallable with ↑/↓.
@@ -51,6 +52,8 @@ ceremony. A few ideas guide it:
   open it in the browser (`Ctrl+E`).
 - **Syntax highlighting** — code files (JSON, Swift, JS/TS, C-family, …) open
   token-coloured instead of as Markdown.
+- **Incremental find** — `Ctrl+F` searches as you type (case-insensitive) and
+  `Ctrl+G` steps through matches, wrapping at the end.
 - **Command palette** — `Ctrl+P` for commands and settings, with submenus
   for LLM configuration.
 - Word wrap, line numbers, soft tables, undo/redo, and **per-file cursor
@@ -88,7 +91,9 @@ Requires macOS 12+ and a Swift 5.9+ toolchain.
 | `Ctrl+P` | Command palette / settings |
 | `Ctrl+Space` | AI assist (edit the section) |
 | `Ctrl+E` | Export to HTML (and open it) |
-| `Ctrl+U` / `Ctrl+G` | Undo / Redo |
+| `Ctrl+F` | Find (incremental) |
+| `Ctrl+G` | Find next match |
+| `Ctrl+U` / `Ctrl+Y` | Undo / Redo |
 | `Ctrl+H` | Delete word backward |
 | `Ctrl+/` | Toggle help bar |
 | Arrows / Shift+Arrows | Move / select |
@@ -98,6 +103,11 @@ Requires macOS 12+ and a Swift 5.9+ toolchain.
 **In an AI edit:** type an instruction and press `Enter`; `↑`/`↓` recall
 previous prompts; `Esc` cancels. While reviewing the diff: `y` / `Tab` accept,
 `n` / `Esc` reject.
+
+**While finding:** `Ctrl+F` opens the find bar and matches update as you type
+(case-insensitive), jumping to the first match. `Ctrl+G` (or `↓`/`→`) steps to
+the next match and wraps; `↑`/`←` steps back. `Enter` keeps the matches so
+`Ctrl+G` keeps working after the bar closes; `Esc` cancels.
 
 ## LLM configuration
 
