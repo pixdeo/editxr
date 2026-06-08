@@ -43,7 +43,10 @@ struct Config: Codable {
         
         do {
             try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
-            let data = try JSONEncoder().encode(self)
+            let encoder = JSONEncoder()
+            // Readable on disk so the file is comfortable to hand-edit.
+            encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+            let data = try encoder.encode(self)
             try data.write(to: URL(fileURLWithPath: Config.configPath))
         } catch { }
     }
