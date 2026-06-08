@@ -1957,12 +1957,30 @@ class EditorApp {
     
     private func renderTopBar(width: Int) -> String {
         let name = (state.filePath as NSString).lastPathComponent
-        // Markdown glyph (Nerd Font) before the filename.
-        var content = "\(Theme.accent)\u{f48a}\(Theme.reset)  \(Theme.textSecondary)\(name)\(Theme.reset)"
+        // File-type glyph (Nerd Font) reflecting what's open.
+        let icon = fileIcon(for: state.filePath)
+        var content = "\(Theme.accent)\(icon)\(Theme.reset)  \(Theme.textSecondary)\(name)\(Theme.reset)"
         if let title = documentTitle() {
             content += "\(Theme.textMuted) — \(title)\(Theme.reset)"
         }
         return truncateToWidth(content, width: width)
+    }
+
+    /// Nerd Font glyph for the open file, by extension (markdown gets its mark,
+    /// other text files a generic document icon).
+    private func fileIcon(for path: String) -> String {
+        switch (path as NSString).pathExtension.lowercased() {
+        case "md", "markdown", "mdx", "mkd": return "\u{f48a}"  // markdown
+        case "json":                         return "\u{e60b}"  // json
+        case "swift":                        return "\u{e755}"  // swift
+        case "sh", "bash", "zsh":            return "\u{f489}"  // terminal
+        case "yml", "yaml", "toml":          return "\u{f0e7}"  // config
+        case "html", "htm", "xml":           return "\u{f13b}"  // html
+        case "css":                          return "\u{f13c}"  // css
+        case "js", "ts", "jsx", "tsx":       return "\u{e60c}"  // js
+        case "py":                           return "\u{e606}"  // python
+        default:                             return "\u{f15c}"  // text document
+        }
     }
 
     /// The document's title: frontmatter `title:`, else the first H1 heading.

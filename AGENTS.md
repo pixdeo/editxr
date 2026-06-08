@@ -157,3 +157,5 @@ Lint/format:
 - No Cursor or Copilot rule files are present in the repo.
 - The app is a single target executable; no test target yet.
 - Keep changes minimal and consistent with the current style.
+- Use english for git messages.
+- Use english for code and comments.
