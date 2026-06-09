@@ -1,13 +1,11 @@
 # editxr
 
 A minimalist Markdown editor for the terminal, written in Swift. It renders
-Markdown live as you type — a **WYSIWYG** experience right in the terminal — and
-has an LLM-assisted editing flow: select a section, describe a change, and
-review the edit as an inline diff before applying it.
-
-It's **ultra fast** — a native Swift binary with no runtime dependencies, so
-it launches instantly and stays responsive even on large files. No waiting: 
-open a file and start typing.
+Markdown live as you type — a WYSIWYG terminal editor where headings, lists,
+tables, and code are styled in place, not in a split preview — and lets you edit
+whole sections with an LLM, shown as an inline diff you accept or reject. A
+native Swift binary with zero dependencies, it opens instantly and stays fast on
+large files.
 
 ```
 test.md — My document
@@ -32,50 +30,38 @@ switch dark / light.
 > **More clips coming:** live Markdown rendering, AI section editing, and
 > find + HTML export.
 
-## Philosophy
-
-editxr is for writing prose and notes in Markdown, in the terminal, without
-ceremony. A few ideas guide it:
-
-- **Render in place.** Markdown should look like Markdown *while you edit it* —
-  headings, emphasis, lists, and tables styled inline — not a split preview
-  pane. The text stays plain and editable; only the presentation is enriched.
-- **Minimal by default.** A clean surface, a single accent colour, and quiet
-  chrome. Settings exist but stay out of the way; the defaults are the point.
-- **AI as a reviewable edit, not a chat.** The LLM rewrites a *section* and
-  shows the result as an inline diff you accept or reject. No conversation
-  thread, no copy-paste — just a proposed change you can see and undo.
-- **Local-first and dependency-free.** Plain Swift, no runtime dependencies, a
-  hand-editable JSON config, and an offline mock so the editing flow works with
-  no backend at all. Bring your own model (local LM Studio, OpenAI, OpenRouter).
-- **Fast and small.** It starts instantly and gets out of the way.
-
 ## Features
 
-- **Ultra fast** — a native Swift binary with zero runtime dependencies; it
-  starts instantly and stays snappy while editing.
-- **Live Markdown rendering** — headings, bold/italic, lists, task lists,
-  tables, blockquotes, code blocks, and YAML frontmatter, rendered in place
-  while staying editable.
-- **Themes** — `System`, `Clay`, `Mono`, `One Dark Pro`, `Dracula`, `GitHub`,
-  `Monokai`, `Solarized`, `Nord`, `Gruvbox`, `Tokyo Night`, and `Catppuccin`,
-  picked from a nested `Themes` palette and each with an independent appearance
-  mode (`Auto` / `Dark` / `Light`). Auto follows the terminal background.
-- **AI section editing** — rewrite the selection (or the current block) with
-  an LLM, shown as a red/green **inline diff** you accept (`y`) or reject
-  (`n`). Prompt history is recallable with ↑/↓.
-- **Multiple LLM providers** — LM Studio (local), OpenAI, OpenRouter, and an
-  offline **Mock** provider for trying the flow without a backend.
-- **Export to HTML** — render the document to a clean, styled `.html` file and
-  open it in the browser (`Ctrl+E`).
+- **Live Markdown rendering** — headings, emphasis, lists, task lists, tables,
+  blockquotes, code blocks, and YAML frontmatter styled in place, while the line
+  you're editing stays plain text.
+- **AI section editing** — rewrite the selection or current block with an LLM
+  and review it as a red/green inline diff: `y` to accept, `n` to reject.
+  Prompt history recalls with ↑/↓.
+- **Bring your own model** — LM Studio (local), OpenAI, OpenRouter, or an
+  offline mock that needs no backend.
+- **12 themes, light or dark** — Clay, One Dark Pro, Dracula, GitHub, Monokai,
+  Solarized, Nord, Gruvbox, Tokyo Night, Catppuccin, Mono, and System, chosen
+  from a rounded command palette (`Auto` follows your terminal background).
+- **Incremental find** — `Ctrl+F` searches as you type; `Ctrl+G` steps through
+  matches and wraps.
+- **HTML export** — render the document to a clean, styled `.html` and open it
+  (`Ctrl+E`).
 - **Syntax highlighting** — code files (JSON, Swift, JS/TS, C-family, …) open
   token-coloured instead of as Markdown.
-- **Incremental find** — `Ctrl+F` searches as you type (case-insensitive) and
-  `Ctrl+G` steps through matches, wrapping at the end.
-- **Command palette** — `Ctrl+P` for commands and settings, with submenus
-  for LLM configuration.
-- Word wrap, line numbers, soft tables, undo/redo, and **per-file cursor
-  memory** (reopen a file where you left off).
+- **Quiet by design** — command palette (`Ctrl+P`), word wrap, line numbers,
+  undo/redo, and per-file cursor memory, all out of the way until you want them.
+
+## Philosophy
+
+editxr is for writing prose and notes without ceremony. Three ideas guide it:
+
+- **See it, don't preview it.** The document is the canvas — no split pane, no
+  separate render window.
+- **AI is an edit, not a conversation.** A model proposes a change to a section;
+  you accept or reject it. Nothing lands that you didn't approve.
+- **Local-first, yours to tweak.** Plain Swift, a hand-editable JSON config, and
+  an offline mode — your terminal, your rules.
 
 ## Install
 
