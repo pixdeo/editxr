@@ -18,25 +18,15 @@ This is a **test** with *markdown*.
 
 ## Demo
 
-**Live Markdown rendering** — headings, emphasis, lists, tables, and code
-styled in place as you type.
-
-![Live Markdown rendering](demo/render.gif)
-
-**AI section editing** — select a section, describe a change, and accept or
-reject the result as an inline diff.
-
-![AI section editing](demo/llm-edit.gif)
+![editxr](demo/demo.png)
 
 **Themes** — pick a palette from the nested Themes menu with live preview, and
 switch dark / light.
 
 ![Themes and appearance](demo/themes.gif)
 
-**Find & export** — incremental find with `Ctrl+F` / `Ctrl+G`, and HTML export
-with `Ctrl+E`.
-
-![Find and HTML export](demo/find-export.gif)
+> **More clips coming:** live Markdown rendering, AI section editing, and
+> find + HTML export.
 
 ## Philosophy
 
@@ -80,6 +70,23 @@ ceremony. A few ideas guide it:
   for LLM configuration.
 - Word wrap, line numbers, soft tables, undo/redo, and **per-file cursor
   memory** (reopen a file where you left off).
+
+## Install
+
+One-liner (builds from source; needs Xcode or the Command Line Tools):
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/pixdeo/editxr/main/install.sh | bash
+```
+
+Homebrew (via the tap):
+
+```bash
+brew install pixdeo/tap/editxr
+```
+
+A signed, notarised universal binary is also attached to each
+[release](https://github.com/pixdeo/editxr/releases).
 
 ## Build & run
 
