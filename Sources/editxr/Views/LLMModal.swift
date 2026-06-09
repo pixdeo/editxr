@@ -229,10 +229,64 @@ class LLMModal {
         }
         
         lines.append(renderHintsLine(width: width))
-        
+
         return lines
     }
-    
+
+    private func spinnerFrame() -> String {
+        let frames = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"]
+        return frames[Int(Date().timeIntervalSince1970 * 10) % frames.count]
+    }
+
+    /// Rows for embedding inside the big status box. No accent bar (the box draws
+    /// the border); each row is padded to `cw` visible columns and stays in the
+    /// status-bar text colour so the box keeps its no-fill look.
+    func statusRows(innerWidth cw: Int) -> [String] {
+        guard isVisible, cw > 0 else { return [] }
+        let txt = Theme.statusBarText
+        func row(_ styled: String, _ visible: Int) -> String {
+            let pad = max(0, cw - min(visible, cw))
+            return "\(txt)\(styled)\(String(repeating: " ", count: pad))\(txt)"
+        }
+        var rows: [String] = []
+        switch state {
+        case .inputting:
+            rows.append(row("\(Theme.accent)✶ Ask AI\(txt)", 8))
+            let cursor = "\(Theme.inverse) \(Theme.reset)\(txt)"
+            if inputBuffer.isEmpty {
+                let ph = "describe the edit…"
+                rows.append(row("\(cursor)\(Theme.textMuted)\(ph)\(txt)", 1 + ph.count))
+            } else {
+                // Keep the cursor in view: show the tail that fits the box.
+                let maxText = max(0, cw - 1)
+                let shown = inputBuffer.count > maxText ? String(inputBuffer.suffix(maxText)) : inputBuffer
+                rows.append(row("\(txt)\(shown)\(cursor)", shown.count + 1))
+            }
+            rows.append(row("\(Theme.textMuted)↵ send   esc cancel\(txt)", 19))
+        case .processing:
+            let t = "\(spinnerFrame()) Processing…"
+            rows.append(row(t, visibleLength(t)))
+            rows.append(row("\(Theme.textMuted)esc cancel\(txt)", 10))
+        case .streaming:
+            for l in wrapContent(streamedContent, width: cw).suffix(6) { rows.append(row(l, l.count)) }
+            if rows.isEmpty {
+                let t = "\(spinnerFrame()) Thinking…"
+                rows.append(row(t, visibleLength(t)))
+            }
+            rows.append(row("\(Theme.textMuted)esc cancel\(txt)", 10))
+        case .result(let text):
+            for l in wrapContent(text, width: cw).suffix(6) { rows.append(row(l, l.count)) }
+            rows.append(row("\(Theme.textMuted)tab accept   esc cancel\(txt)", 23))
+        case .error(let m):
+            let t = "⚠ \(m)"
+            rows.append(row(truncateToWidth(t, width: cw), min(visibleLength(t), cw)))
+            rows.append(row("\(Theme.textMuted)esc dismiss\(txt)", 11))
+        case .hidden:
+            break
+        }
+        return rows
+    }
+
     private func wrapContent(_ content: String, width: Int) -> [String] {
         guard width > 0 else { return [] }
         var result: [String] = []

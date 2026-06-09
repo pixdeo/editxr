@@ -760,13 +760,16 @@ class EditorApp {
         // Top bar (filename + optional markdown title) + status + hint bars.
         var reservedLines = 3
 
-        let modalLines = llmModal?.render(width: width) ?? []
-        if !modalLines.isEmpty {
-            reservedLines += modalLines.count
-        }
-        // The big status bar is a 3-row box (2 extra rows over the slim one).
+        // The AI prompt grows the big status box (which hosts it inline); with the
+        // slim bar it falls back to a block stacked above the status line.
+        let modalVisible = llmModal?.isVisible ?? false
+        let modalLines = (modalVisible && !state.statusBarBig) ? (llmModal?.render(width: width) ?? []) : []
+        reservedLines += modalLines.count
         if state.statusBarBig {
-            reservedLines += 2
+            reservedLines += 2   // 3-row rounded box vs the slim 1-row bar
+            if modalVisible {
+                reservedLines += llmModal?.statusRows(innerWidth: max(0, width - 4)).count ?? 0
+            }
         }
 
         let contentHeight = height - reservedLines
@@ -2375,12 +2378,18 @@ class EditorApp {
     /// behind the content — the border sits on the editor background.
     private func renderStatusBarBig(width: Int) -> [String] {
         let mid = String(repeating: "─", count: max(0, width - 2))
-        let content = "\(Theme.accent)│ \(statusInner(innerWidth: max(0, width - 4))) \(Theme.accent)│\(Theme.reset)"
-        return [
-            "\(Theme.accent)╭\(mid)╮\(Theme.reset)",
-            content,
-            "\(Theme.accent)╰\(mid)╯\(Theme.reset)",
-        ]
+        let innerW = max(0, width - 4)
+        func boxed(_ inner: String) -> String {
+            "\(Theme.accent)│ \(inner) \(Theme.accent)│\(Theme.reset)"
+        }
+        var rows: [String] = ["\(Theme.accent)╭\(mid)╮\(Theme.reset)"]
+        // The AI prompt grows the box: its rows sit above the status line.
+        if let modal = llmModal, modal.isVisible {
+            for r in modal.statusRows(innerWidth: innerW) { rows.append(boxed(r)) }
+        }
+        rows.append(boxed(statusInner(innerWidth: innerW)))
+        rows.append("\(Theme.accent)╰\(mid)╯\(Theme.reset)")
+        return rows
     }
 
     /// The status content (dirty/find indicator on the left, word count and
