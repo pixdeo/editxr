@@ -73,9 +73,10 @@ This is a **test** with *markdown*.
 
 ## Philosophy
 
-editxr styles the document in the buffer, not in a preview pane. The line under
-your cursor stays raw text you can edit, and everything else is rendered, so
-you're always editing the real file.
+In editxr you see the rendered result directly, without a separate preview pane.
+The line under your cursor stays raw text you can edit, and everything else is
+rendered, so you're always editing the real file. For a full render, press
+`Ctrl+E` to open the document as HTML in your browser.
 
 The AI works the same way: it suggests a change and you approve it. You pick a
 section, describe what you want, and get a diff to accept or reject. There's no
