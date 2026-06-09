@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  A WYSIWYG Markdown editor for the terminal — AI-assisted, zero dependencies.
+  A WYSIWYG Markdown editor for the terminal — AI-assisted, 100% Swift, zero dependencies. macOS &amp; Linux.
 </p>
 
 It renders Markdown live as you type — headings, lists, tables, and code styled
