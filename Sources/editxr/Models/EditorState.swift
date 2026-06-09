@@ -429,6 +429,20 @@ class EditorState {
         }
     }
     
+    /// Empty the whole document in memory. The file on disk is untouched until
+    /// the next save; undoable like any other edit.
+    func clearAll() {
+        guard !(document.lines.count == 1 && document.lines[0].isEmpty) else { return }
+        saveSnapshot()
+        document.lines = [""]
+        document.cursorLine = 0
+        document.cursorColumn = 0
+        document.clearSelection()
+        scrollOffset = 0
+        scrollX = 0
+        isDirty = true
+    }
+
     func copy() {
         if let text = document.selectedText {
             clipboard = text

@@ -96,19 +96,75 @@ class EditorApp {
         }
     }
 
-    /// A toggle command that keeps the palette open and refreshes the menu so
-    /// the change previews live (close with Esc / ←) and any state labels update.
+    /// A toggle that keeps the palette open; the panel re-generates the level
+    /// afterwards so the on/off label refreshes live (close with Esc / ←).
     private func toggleCommand(_ title: String, _ shortcut: String, _ toggle: @escaping () -> Void) -> PaletteCommand {
-        return PaletteCommand(title: title, shortcut: shortcut, keepsOpen: true) { [weak self] in
-            guard let self = self else { return }
-            toggle()
-            self.commandPanel?.replaceCommands(self.buildCommands())
-        }
+        return PaletteCommand(title: title, shortcut: shortcut, keepsOpen: true) { toggle() }
+    }
+
+    /// An entry that opens a submenu generated on demand (so it nests, refreshes,
+    /// and is reachable by the palette's global search).
+    private func submenuCommand(_ title: String, _ generate: @escaping () -> [PaletteCommand]) -> PaletteCommand {
+        return PaletteCommand(title: title, shortcut: "→", submenu: generate, action: {})
     }
 
     private func buildCommands() -> [PaletteCommand] {
-        var cmds: [PaletteCommand] = [
+        var cmds: [PaletteCommand] = []
+
+        cmds.append(.header("File"))
+        cmds += [
             PaletteCommand(title: "Save", shortcut: "^S") { [weak self] in self?.state.save() },
+            PaletteCommand(title: "Export to HTML", shortcut: "^E") { [weak self] in self?.exportToHTML() },
+            PaletteCommand(title: "Quit", shortcut: "^Q") { [weak self] in self?.quit() },
+        ]
+
+        cmds.append(.spacer)
+        cmds.append(.header("Edit"))
+        cmds += [
+            PaletteCommand(title: "Find", shortcut: "^F") { [weak self] in self?.state.beginSearch() },
+            PaletteCommand(title: "Find next", shortcut: "^G") { [weak self] in self?.state.searchNext() },
+            PaletteCommand(title: "Undo", shortcut: "^U") { [weak self] in self?.state.undo() },
+            PaletteCommand(title: "Redo", shortcut: "^Y") { [weak self] in self?.state.redo() },
+            PaletteCommand(title: "Clear all", shortcut: "") { [weak self] in self?.state.clearAll() },
+        ]
+
+        // Nested submenus need no header — the entry title speaks for itself.
+        cmds.append(.spacer)
+        cmds.append(submenuCommand("Editor settings") { [weak self] in self?.editorMenuCommands() ?? [] })
+
+        cmds.append(.spacer)
+        cmds.append(.header("Go to"))
+        cmds += [
+            PaletteCommand(title: "Go to top", shortcut: "Home") { [weak self] in self?.state.goToTop() },
+            PaletteCommand(title: "Go to bottom", shortcut: "End") { [weak self] in self?.state.goToBottom() },
+            PaletteCommand(title: "Page up", shortcut: "PgUp") { [weak self] in
+                guard let self = self else { return }
+                self.state.pageUp(viewportHeight: self.getTerminalSize().height - 3)
+            },
+            PaletteCommand(title: "Page down", shortcut: "PgDn") { [weak self] in
+                guard let self = self else { return }
+                self.state.pageDown(viewportHeight: self.getTerminalSize().height - 3)
+            },
+        ]
+
+        cmds.append(.spacer)
+        cmds.append(.header("AI"))
+        cmds += [
+            PaletteCommand(title: "AI assist", shortcut: "^Space") { [weak self] in self?.showLLMModal() },
+            submenuCommand("LLM settings") { [weak self] in self?.llmSettingsCommands() ?? [] },
+        ]
+
+        cmds.append(.spacer)
+        cmds.append(submenuCommand("Theme & appearance") { [weak self] in self?.themeMenuCommands() ?? [] })
+
+        return cmds
+    }
+
+    // MARK: - Editor settings menu
+
+    /// View / layout toggles and editing-pane settings, nested under "Editor".
+    private func editorMenuCommands() -> [PaletteCommand] {
+        return [
             toggleCommand("Toggle raw view", "^R") { [weak self] in self?.state.toggleViewMode() },
             toggleCommand("Toggle word wrap", "^W") { [weak self] in self?.state.toggleWordWrap() },
             toggleCommand("Toggle line numbers", "^L") { [weak self] in self?.state.toggleLineNumbers() },
@@ -130,58 +186,25 @@ class EditorApp {
                 }
             },
         ]
-        cmds.append(PaletteCommand(title: "Themes", shortcut: "→") { [weak self] in
-            self?.pushThemeSettings()
-        })
-        cmds += [
-            PaletteCommand(title: "Find", shortcut: "^F") { [weak self] in self?.state.beginSearch() },
-            PaletteCommand(title: "Find next", shortcut: "^G") { [weak self] in self?.state.searchNext() },
-            PaletteCommand(title: "Undo", shortcut: "^U") { [weak self] in self?.state.undo() },
-            PaletteCommand(title: "Redo", shortcut: "^Y") { [weak self] in self?.state.redo() },
-            PaletteCommand(title: "Go to top", shortcut: "Home") { [weak self] in self?.state.goToTop() },
-            PaletteCommand(title: "Go to bottom", shortcut: "End") { [weak self] in self?.state.goToBottom() },
-            PaletteCommand(title: "Page up", shortcut: "PgUp") { [weak self] in
-                guard let self = self else { return }
-                self.state.pageUp(viewportHeight: self.getTerminalSize().height - 3)
-            },
-            PaletteCommand(title: "Page down", shortcut: "PgDn") { [weak self] in
-                guard let self = self else { return }
-                self.state.pageDown(viewportHeight: self.getTerminalSize().height - 3)
-            },
-            PaletteCommand(title: "AI assist", shortcut: "^Space") { [weak self] in self?.showLLMModal() },
-            PaletteCommand(title: "Export to HTML", shortcut: "^E") { [weak self] in self?.exportToHTML() },
-        ]
-        cmds.append(PaletteCommand(title: "LLM settings", shortcut: "→") { [weak self] in
-            self?.pushLLMSettings()
-        })
-        cmds.append(PaletteCommand(title: "Quit", shortcut: "^Q") { [weak self] in self?.quit() })
-        return cmds
     }
 
     // MARK: - Theme menu
 
-    private func pushThemeSettings() {
-        commandPanel?.push(title: "Themes", commands: themeMenuCommands())
-    }
-
-    /// Theme + appearance picker. Selecting keeps the panel open and refreshes
-    /// the list so the change previews live and the "current" marker follows.
+    /// Theme + appearance picker. Selecting keeps the panel open; the panel
+    /// re-generates the list so the change previews live and the "current"
+    /// marker follows.
     private func themeMenuCommands() -> [PaletteCommand] {
         var cmds: [PaletteCommand] = []
         for theme in ThemeName.allCases {
             let active = state.themeName == theme
             cmds.append(PaletteCommand(title: theme.displayName, shortcut: active ? "current" : "", keepsOpen: true) { [weak self] in
-                guard let self = self else { return }
-                self.state.setTheme(theme)
-                self.commandPanel?.replaceCommands(self.themeMenuCommands())
+                self?.state.setTheme(theme)
             })
         }
         for appearance in Appearance.allCases {
             let active = state.appearance == appearance
             cmds.append(PaletteCommand(title: "Appearance: \(appearance.displayName)", shortcut: active ? "current" : "", keepsOpen: true) { [weak self] in
-                guard let self = self else { return }
-                self.state.setAppearance(appearance)
-                self.commandPanel?.replaceCommands(self.themeMenuCommands())
+                self?.state.setAppearance(appearance)
             })
         }
         return cmds
@@ -195,7 +218,7 @@ class EditorApp {
         commandPanel?.hide()
     }
 
-    private func pushLLMSettings() {
+    private func llmSettingsCommands() -> [PaletteCommand] {
         var cmds: [PaletteCommand] = []
         func mark(_ p: LLMProvider) -> String { state.llmProvider == p ? "current" : "" }
 
@@ -211,19 +234,17 @@ class EditorApp {
                 self?.startOpenAIOAuth()
             })
         }
-        cmds.append(PaletteCommand(title: "OpenRouter", shortcut: "→") { [weak self] in
-            self?.pushOpenRouterSettings()
-        })
+        cmds.append(submenuCommand("OpenRouter") { [weak self] in self?.openRouterCommands() ?? [] })
         cmds.append(PaletteCommand(title: "Provider: Mock (offline)", shortcut: mark(.mock)) { [weak self] in
             self?.selectProvider(.mock)
         })
-        commandPanel?.push(title: "LLM Settings", commands: cmds)
+        return cmds
     }
 
-    private func pushOpenRouterSettings() {
+    private func openRouterCommands() -> [PaletteCommand] {
         let keyLabel = (state.openRouterKey?.isEmpty == false) ? "set" : "not set"
         let modelLabel = (state.openRouterModel?.isEmpty == false) ? state.openRouterModel! : "default"
-        let cmds: [PaletteCommand] = [
+        return [
             PaletteCommand(title: "Set API key", shortcut: keyLabel) { [weak self] in
                 guard let self = self else { return }
                 self.commandPanel?.beginInput(prompt: "OpenRouter API key", value: self.state.openRouterKey ?? "", isSecret: true) { [weak self] key in
@@ -242,7 +263,6 @@ class EditorApp {
                 self?.selectProvider(.openRouter)
             },
         ]
-        commandPanel?.push(title: "OpenRouter", commands: cmds)
     }
     
     func start() {
@@ -763,13 +783,18 @@ class EditorApp {
     // MARK: - Focus mode
 
     /// Fade radii: how far the gradient reaches before text hits the background.
-    private let focusVRadius = 7    // lines, vertically
-    private let focusHRadius = 22   // columns, horizontally (word mode)
+    private let focusVRadius = 7        // lines, vertically (line mode)
+    private let focusWordVRadius = 3    // lines, word mode — tighter so a word
+                                        // aligned with the cursor column but on a
+                                        // neighbouring line still dims instead of
+                                        // forming a bright vertical beam.
+    private let focusHRadius = 22       // columns, horizontally (word mode)
 
     /// Combined fade weight (0 = lit, 1 = background) from the cursor, as a
     /// radial blend of vertical line distance and horizontal column distance.
-    private func focusT(lineDelta: Int, colDistance: Int) -> Double {
-        let dv = Double(abs(lineDelta)) / Double(focusVRadius)
+    /// `vRadius` overrides how fast the vertical term reaches the background.
+    private func focusT(lineDelta: Int, colDistance: Int, vRadius: Int? = nil) -> Double {
+        let dv = Double(abs(lineDelta)) / Double(vRadius ?? focusVRadius)
         let dh = Double(colDistance) / Double(focusHRadius)
         return min(1.0, (dv * dv + dh * dh).squareRoot())
     }
@@ -829,7 +854,8 @@ class EditorApp {
         while idx < chars.count {
             if chars[idx] == " " || chars[idx] == "\t" {
                 let col = baseColumn + idx
-                ts[idx] = focusT(lineDelta: lineDelta, colDistance: abs(col - cursorCol))
+                ts[idx] = focusT(lineDelta: lineDelta, colDistance: abs(col - cursorCol),
+                                 vRadius: focusWordVRadius)
                 idx += 1
                 continue
             }
@@ -839,7 +865,7 @@ class EditorApp {
             let endCol = baseColumn + idx - 1
             let dh = cursorCol < startCol ? startCol - cursorCol
                    : (cursorCol > endCol ? cursorCol - endCol : 0)
-            let t = focusT(lineDelta: lineDelta, colDistance: dh)
+            let t = focusT(lineDelta: lineDelta, colDistance: dh, vRadius: focusWordVRadius)
             for k in wStart..<idx { ts[k] = t }
         }
 
@@ -1100,7 +1126,7 @@ class EditorApp {
             openAIOAuth.cancel()
             panel.hide()
         } else {
-            panel.setCommands(buildCommands())
+            panel.setRoot { [weak self] in self?.buildCommands() ?? [] }
             panel.show()
         }
         render()

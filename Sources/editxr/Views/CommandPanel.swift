@@ -6,7 +6,28 @@ struct PaletteCommand {
     /// Keep the panel open after running (e.g. live theme preview) instead of
     /// auto-closing like a terminal command.
     var keepsOpen: Bool = false
+    /// Non-selectable section label that breaks the list into groups. Skipped by
+    /// arrow navigation and hidden while a search query is active.
+    var isHeader: Bool = false
+    /// Non-selectable blank row used to separate groups. Like a header, it's
+    /// skipped by navigation and hidden during search.
+    var isSpacer: Bool = false
+    /// If set, activating this row opens a submenu. The closure regenerates the
+    /// child commands on demand, so the panel can also flatten them for a global
+    /// search across levels and refresh live markers.
+    var submenu: (() -> [PaletteCommand])? = nil
     let action: () -> Void
+
+    /// Whether arrow navigation / activation can land on this row.
+    var isSelectable: Bool { !isHeader && !isSpacer }
+
+    /// A group divider row, e.g. `.header("Edit")`.
+    static func header(_ title: String) -> PaletteCommand {
+        PaletteCommand(title: title, shortcut: "", isHeader: true, action: {})
+    }
+
+    /// A blank gap between groups.
+    static let spacer = PaletteCommand(title: "", shortcut: "", isSpacer: true, action: {})
 }
 
 final class CommandPanel {
@@ -28,10 +49,12 @@ final class CommandPanel {
     private(set) var state: State = .hidden
     private var title: String = "Commands"
     private var commands: [PaletteCommand] = []
+    /// Regenerates the current level's commands (fresh state labels / markers).
+    private var generate: () -> [PaletteCommand] = { [] }
     private var query: String = ""
     private var selectedIndex: Int = 0
     // Nav stack of parent menus, for submenu push/pop.
-    private var stack: [(title: String, commands: [PaletteCommand], query: String, selectedIndex: Int)] = []
+    private var stack: [(title: String, generate: () -> [PaletteCommand], commands: [PaletteCommand], query: String, selectedIndex: Int)] = []
 
     var onStateChanged: (() -> Void)?
 
@@ -47,24 +70,20 @@ final class CommandPanel {
         return false
     }
 
-    func setCommands(_ commands: [PaletteCommand]) {
-        self.commands = commands
-        self.title = "Commands"
+    /// Set the root level from a generator so the panel can rebuild it (for live
+    /// marker refresh and to flatten nested submenus during a global search).
+    func setRoot(title: String = "Commands", generate: @escaping () -> [PaletteCommand]) {
+        self.generate = generate
+        self.commands = generate()
+        self.title = title
         self.stack = []
-    }
-
-    /// Replace the current level's commands in place (keeping title, stack, and
-    /// selection) — used to refresh markers after a keep-open action.
-    func replaceCommands(_ commands: [PaletteCommand]) {
-        self.commands = commands
-        onStateChanged?()
     }
 
     func show() {
         query = ""
-        selectedIndex = 0
         stack = []
         state = .browsing
+        resetSelection()
         onStateChanged?()
     }
 
@@ -77,19 +96,21 @@ final class CommandPanel {
     // MARK: - Navigation
 
     /// Push a submenu, keeping the current level on the stack to return to.
-    func push(title: String, commands: [PaletteCommand]) {
-        stack.append((self.title, self.commands, query, selectedIndex))
+    func push(title: String, generate: @escaping () -> [PaletteCommand]) {
+        stack.append((self.title, self.generate, self.commands, query, selectedIndex))
         self.title = title
-        self.commands = commands
+        self.generate = generate
+        self.commands = generate()
         query = ""
-        selectedIndex = 0
         state = .browsing
+        resetSelection()
         onStateChanged?()
     }
 
     private func pop() {
         guard let parent = stack.popLast() else { hide(); return }
         title = parent.title
+        generate = parent.generate
         commands = parent.commands
         query = parent.query
         selectedIndex = parent.selectedIndex
@@ -116,7 +137,42 @@ final class CommandPanel {
     private var filteredCommands: [PaletteCommand] {
         guard !query.isEmpty else { return commands }
         let q = query.lowercased()
-        return commands.filter { $0.title.lowercased().contains(q) }
+        // While searching, flatten the whole subtree (descending into submenus)
+        // so a command nested a level down still shows up and runs in place.
+        return flattenForSearch(commands).filter { $0.title.lowercased().contains(q) }
+    }
+
+    /// Depth-first list of the selectable rows in `cmds` and every submenu they
+    /// open. Used only for search; headers / spacers are dropped.
+    private func flattenForSearch(_ cmds: [PaletteCommand]) -> [PaletteCommand] {
+        var out: [PaletteCommand] = []
+        for c in cmds where c.isSelectable {
+            out.append(c)
+            if let sub = c.submenu {
+                out.append(contentsOf: flattenForSearch(sub()))
+            }
+        }
+        return out
+    }
+
+    /// First selectable row at or after `from`, scanning in the direction of
+    /// `step` and wrapping around. Nil if there's nothing to land on.
+    private func selectableIndex(from: Int, step: Int) -> Int? {
+        let cmds = filteredCommands
+        guard !cmds.isEmpty else { return nil }
+        var i = from
+        for _ in 0..<cmds.count {
+            let wrapped = ((i % cmds.count) + cmds.count) % cmds.count
+            if cmds[wrapped].isSelectable { return wrapped }
+            i += step
+        }
+        return nil   // nothing selectable
+    }
+
+    /// Park the selection on the first selectable row (used after the list or
+    /// the search query changes).
+    private func resetSelection() {
+        selectedIndex = selectableIndex(from: 0, step: 1) ?? 0
     }
 
     /// Enter / run the selected command (right arrow, mirrors Enter).
@@ -134,10 +190,12 @@ final class CommandPanel {
 
     func moveSelection(_ delta: Int) {
         guard case .browsing = state else { return }
-        let count = filteredCommands.count
-        guard count > 0 else { return }
-        selectedIndex = (selectedIndex + delta + count) % count
-        onStateChanged?()
+        guard !filteredCommands.isEmpty else { return }
+        let step = delta >= 0 ? 1 : -1
+        if let idx = selectableIndex(from: selectedIndex + delta, step: step) {
+            selectedIndex = idx
+            onStateChanged?()
+        }
     }
 
     func handleKey(_ char: Character) {
@@ -194,13 +252,13 @@ final class CommandPanel {
         case Key.backspace:
             if !query.isEmpty {
                 query.removeLast()
-                selectedIndex = 0
+                resetSelection()
                 onStateChanged?()
             }
         default:
             if isPrintable(char) {
                 query.append(char)
-                selectedIndex = 0
+                resetSelection()
                 onStateChanged?()
             }
         }
@@ -210,15 +268,31 @@ final class CommandPanel {
         let cmds = filteredCommands
         guard selectedIndex >= 0 && selectedIndex < cmds.count else { return }
         let cmd = cmds[selectedIndex]
+        guard cmd.isSelectable else { return }   // headers / spacers aren't actionable
+
+        // Submenu entry: descend into it (works the same whether reached by
+        // browsing or matched by a global search).
+        if let submenu = cmd.submenu {
+            push(title: cmd.title, generate: submenu)
+            return
+        }
+
         let depthBefore = stack.count
         cmd.action()
-        // Auto-close only for terminal commands: if the action navigated
-        // (pushed a submenu, opened input/OAuth, hid) or asked to stay open
-        // (e.g. live theme preview), leave it as-is.
-        if case .browsing = state, stack.count == depthBefore, !cmd.keepsOpen {
-            hide()
-        } else {
+        // If the action navigated (pushed a submenu, opened input/OAuth, hid),
+        // leave it. Keep-open commands refresh the level in place so labels /
+        // markers update — even when the toggle was reached via search, where
+        // re-generating rebuilds the flattened result list. Everything else is a
+        // terminal command and closes the panel.
+        guard case .browsing = state, stack.count == depthBefore else {
             onStateChanged?()
+            return
+        }
+        if cmd.keepsOpen {
+            commands = generate()
+            onStateChanged?()
+        } else {
+            hide()
         }
     }
 
@@ -302,7 +376,13 @@ final class CommandPanel {
             lines.append(textRow("No matching commands", color: Theme.textMuted, cursor: false, contentWidth: contentWidth, boxWidth: boxWidth))
         } else {
             for i in start..<end {
-                lines.append(commandRow(cmds[i], selected: i == selectedIndex, contentWidth: contentWidth, boxWidth: boxWidth))
+                if cmds[i].isSpacer {
+                    lines.append(blankRow(boxWidth: boxWidth))
+                } else if cmds[i].isHeader {
+                    lines.append(headerRow(cmds[i].title, contentWidth: contentWidth, boxWidth: boxWidth))
+                } else {
+                    lines.append(commandRow(cmds[i], selected: i == selectedIndex, contentWidth: contentWidth, boxWidth: boxWidth))
+                }
             }
         }
 
@@ -356,6 +436,12 @@ final class CommandPanel {
             visible += 1
         }
         return frame(styled, innerVisible: visible, bg: Theme.statusBarBg, boxWidth: boxWidth)
+    }
+
+    private func headerRow(_ title: String, contentWidth: Int, boxWidth: Int) -> String {
+        let label = truncate(title.uppercased(), to: contentWidth)
+        let styled = "\(Theme.textMuted)\(label)"
+        return frame(styled, innerVisible: label.displayWidth, bg: Theme.statusBarBg, boxWidth: boxWidth)
     }
 
     private func commandRow(_ cmd: PaletteCommand, selected: Bool, contentWidth: Int, boxWidth: Int) -> String {
