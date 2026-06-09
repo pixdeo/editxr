@@ -5,6 +5,10 @@ Markdown live as you type, and has an LLM-assisted editing flow: select a
 section, describe a change, and review the edit as an inline diff before
 applying it.
 
+It's **ultra fast** — a native Swift binary with no runtime dependencies, so
+it launches instantly and stays responsive even on large files. No splash, no
+spinner, no waiting: open a file and start typing.
+
 ```
 test.md — My document
 
@@ -48,6 +52,8 @@ ceremony. A few ideas guide it:
 
 ## Features
 
+- **Ultra fast** — a native Swift binary with zero runtime dependencies; it
+  starts instantly and stays snappy while editing.
 - **Live Markdown rendering** — headings, bold/italic, lists, task lists,
   tables, blockquotes, code blocks, and YAML frontmatter, rendered in place
   while staying editable.
