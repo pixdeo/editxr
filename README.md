@@ -16,6 +16,28 @@ This is a **test** with *markdown*.
 ▪ Item 2
 ```
 
+## Demo
+
+**Live Markdown rendering** — headings, emphasis, lists, tables, and code
+styled in place as you type.
+
+![Live Markdown rendering](demo/render.gif)
+
+**AI section editing** — select a section, describe a change, and accept or
+reject the result as an inline diff.
+
+![AI section editing](demo/llm-edit.gif)
+
+**Themes** — pick a palette from the nested Themes menu with live preview, and
+switch dark / light.
+
+![Themes and appearance](demo/themes.gif)
+
+**Find & export** — incremental find with `Ctrl+F` / `Ctrl+G`, and HTML export
+with `Ctrl+E`.
+
+![Find and HTML export](demo/find-export.gif)
+
 ## Philosophy
 
 editxr is for writing prose and notes in Markdown, in the terminal, without
@@ -139,4 +161,4 @@ Settings (theme, appearance, provider, keys) persist to
 
 ## License
 
-MIT © Pixdeo LTD. See [LICENSE](LICENSE).
+MIT © 2026 Pixdeo LTD. See [LICENSE](LICENSE).
