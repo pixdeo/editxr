@@ -1,6 +1,8 @@
 import Foundation
+#if canImport(CryptoKit) && canImport(Network)
 import CryptoKit
 import Network
+#endif
 
 struct OpenAIOAuthTokens: Codable {
     var accessToken: String
@@ -8,6 +10,7 @@ struct OpenAIOAuthTokens: Codable {
     var expiresAt: Double?
 }
 
+#if canImport(CryptoKit) && canImport(Network)
 final class OpenAIOAuth {
     struct Config {
         var authorizeURL: String
@@ -333,3 +336,22 @@ final class OpenAIOAuth {
             .replacingOccurrences(of: "=", with: "")
     }
 }
+#else
+/// OpenAI sign-in needs CryptoKit + Network (Apple platforms). Elsewhere it's a
+/// no-op stub so the rest of the app still builds — use another provider.
+final class OpenAIOAuth {
+    enum OAuthError: Error, LocalizedError {
+        case unsupported
+        var errorDescription: String? { "OpenAI sign-in isn't available on this platform" }
+    }
+
+    func start(
+        onUpdate: @escaping (_ url: String, _ message: String) -> Void,
+        completion: @escaping (Result<OpenAIOAuthTokens, OAuthError>) -> Void
+    ) {
+        completion(.failure(.unsupported))
+    }
+
+    func cancel() {}
+}
+#endif

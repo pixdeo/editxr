@@ -1,9 +1,9 @@
 # editxr
 
 A minimalist Markdown editor for the terminal, written in Swift. It renders
-Markdown live as you type, and has an LLM-assisted editing flow: select a
-section, describe a change, and review the edit as an inline diff before
-applying it.
+Markdown live as you type — a **WYSIWYG** experience right in the terminal — and
+has an LLM-assisted editing flow: select a section, describe a change, and
+review the edit as an inline diff before applying it.
 
 It's **ultra fast** — a native Swift binary with no runtime dependencies, so
 it launches instantly and stays responsive even on large files. No waiting: 
@@ -112,7 +112,9 @@ fails to compile (it uses the Command Line Tools toolchain):
 ./build.sh install         # release build + copy to /usr/local/bin/editxr
 ```
 
-Requires macOS 12+ and a Swift 5.9+ toolchain.
+Requires macOS 12+ and a Swift 5.9+ toolchain. It also builds and runs on
+Linux (Swift 6+) — only the OpenAI OAuth sign-in is macOS-only; the other LLM
+providers work everywhere.
 
 ## Keybindings
 
@@ -163,6 +165,10 @@ Settings (theme, appearance, provider, keys) persist to
 
 ## Roadmap
 
+- [ ] **Homebrew tap** — publish `pixdeo/homebrew-tap` with the formula so
+  `brew install pixdeo/tap/editxr` works.
+- [ ] **Demo clips** — record the remaining demos (live rendering, AI editing,
+  find + HTML export).
 - [ ] **Inline image rendering** — draw Markdown images (`![alt](pic.png)`)
   directly in the editor using terminal graphics protocols (iTerm2 inline
   images / Kitty graphics / Sixel), with a block-character fallback for

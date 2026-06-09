@@ -18,38 +18,38 @@ struct SearchMatch {
     let length: Int
 }
 
-class EditorState: ObservableObject {
+class EditorState {
     let filePath: String
-    @Published var document: Document
-    @Published var viewMode: ViewMode = .normal
-    @Published var showStatusBar: Bool = true
-    @Published var showHelp: Bool = true
-    @Published var showLineNumbers: Bool = false
-    @Published var statusBarBig: Bool = true
-    @Published var wordWrap: Bool = true
-    @Published var scrollPastEnd: Bool = true
-    @Published var fullTable: Bool = true
-    @Published var leftMargin: Int = 1
-    @Published var themeName: ThemeName = .system
-    @Published var appearance: Appearance = .auto
-    @Published var isDirty: Bool = false
-    @Published var showSavedIndicator: Bool = false
-    @Published var scrollOffset: Int = 0
-    @Published var scrollX: Int = 0
-    @Published var pendingEdit: PendingEdit? = nil
+    var document: Document
+    var viewMode: ViewMode = .normal
+    var showStatusBar: Bool = true
+    var showHelp: Bool = true
+    var showLineNumbers: Bool = false
+    var statusBarBig: Bool = true
+    var wordWrap: Bool = true
+    var scrollPastEnd: Bool = true
+    var fullTable: Bool = true
+    var leftMargin: Int = 1
+    var themeName: ThemeName = .system
+    var appearance: Appearance = .auto
+    var isDirty: Bool = false
+    var showSavedIndicator: Bool = false
+    var scrollOffset: Int = 0
+    var scrollX: Int = 0
+    var pendingEdit: PendingEdit? = nil
 
     // Incremental find (Ctrl+F / Ctrl+G). `searchActive` drives the input bar;
     // the query + match list persist after committing so Ctrl+G keeps stepping.
-    @Published var searchActive: Bool = false
-    @Published var searchQuery: String = ""
-    @Published var searchMatches: [SearchMatch] = []
-    @Published var searchIndex: Int = 0
+    var searchActive: Bool = false
+    var searchQuery: String = ""
+    var searchMatches: [SearchMatch] = []
+    var searchIndex: Int = 0
     private var searchOrigin: CursorPosition = CursorPosition(line: 0, column: 0)
 
     /// Syntax highlighter for non-Markdown files (nil → render as Markdown).
     let syntaxHighlighter: SyntaxHighlighter?
 
-    @Published var llmProvider: LLMProvider = .lmStudio
+    var llmProvider: LLMProvider = .lmStudio
     private(set) var openRouterKey: String? = nil
     private(set) var openRouterModel: String? = nil
     private(set) var openAIAccessToken: String? = nil
