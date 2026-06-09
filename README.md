@@ -3,13 +3,13 @@
 </p>
 
 <p align="center">
-  A WYSIWYG Markdown editor for the terminal — AI-assisted, 100% Swift, zero dependencies. macOS &amp; Linux.
+  A WYSIWYG Markdown editor for the terminal. AI-assisted, 100% Swift, zero dependencies. macOS &amp; Linux.
 </p>
 
-It renders Markdown live as you type — headings, lists, tables, and code styled
-in place, not in a split preview — and lets you edit whole sections with an LLM,
-shown as an inline diff you accept or reject. Written in Swift as a native
-binary, it opens instantly and stays fast on large files.
+It renders Markdown live as you type: headings, lists, tables, and code are
+styled in place, not in a split preview. You can hand a whole section to an LLM
+and review its change as an inline diff before it lands. It's a native Swift
+binary with no dependencies, so it opens instantly and stays fast on large files.
 
 ```
 test.md — My document
@@ -26,62 +26,63 @@ This is a **test** with *markdown*.
 
 ![editxr](demo/demo.png)
 
-**Renders as you type** — Markdown styled in place; the line you're on stays raw.
+**Renders as you type.** Markdown is styled in place; the line you're on stays raw.
 
 ![Live Markdown rendering](demo/render.gif)
 
-**AI section editing** — describe a change, review it as an inline diff.
+**AI section editing.** Describe a change and review it as an inline diff.
 
 ![AI section editing](demo/ai.gif)
 
-**Themes** — light or dark, from the command palette.
+**Themes.** Light or dark, from the command palette.
 
 ![Themes](demo/themes.gif)
 
-**Rendered ↔ raw** — flip the view with `Ctrl+R`.
+**Rendered or raw.** Flip the view with `Ctrl+R`.
 
 ![Rendered and raw](demo/raw.gif)
 
-**Incremental find** — `Ctrl+F` to search, `Ctrl+G` to step through matches.
+**Incremental find.** `Ctrl+F` to search, `Ctrl+G` to step through matches.
 
 ![Incremental find](demo/find.gif)
 
-**Opens instantly** — even on large files.
+**Opens instantly.** Even on large files.
 
 ![Opens instantly](demo/open.gif)
 
 ## Features
 
-- **Live Markdown rendering** — headings, emphasis, lists, task lists, tables,
-  blockquotes, code blocks, and YAML frontmatter styled in place, while the line
-  you're editing stays plain text.
-- **AI section editing** — rewrite the selection or current block with an LLM
-  and review it as a red/green inline diff: `y` to accept, `n` to reject.
-  Prompt history recalls with ↑/↓.
-- **Bring your own model** — LM Studio (local), OpenAI, OpenRouter, or an
-  offline mock that needs no backend.
-- **12 themes, light or dark** — Clay, One Dark Pro, Dracula, GitHub, Monokai,
+- **Live Markdown rendering.** Headings, emphasis, lists, task lists, tables,
+  blockquotes, code blocks, and YAML frontmatter are styled in place, while the
+  line you're editing stays plain text.
+- **AI section editing.** Rewrite the selection or current block with an LLM and
+  review it as a red/green inline diff: `y` to accept, `n` to reject. Prompt
+  history recalls with ↑/↓.
+- **Bring your own model.** LM Studio (local), OpenAI, OpenRouter, or an offline
+  mock that needs no backend.
+- **12 themes, light or dark.** Clay, One Dark Pro, Dracula, GitHub, Monokai,
   Solarized, Nord, Gruvbox, Tokyo Night, Catppuccin, Mono, and System, chosen
   from a rounded command palette (`Auto` follows your terminal background).
-- **Incremental find** — `Ctrl+F` searches as you type; `Ctrl+G` steps through
+- **Incremental find.** `Ctrl+F` searches as you type; `Ctrl+G` steps through
   matches and wraps.
-- **HTML export** — render the document to a clean, styled `.html` and open it
-  (`Ctrl+E`).
-- **Syntax highlighting** — code files (JSON, Swift, JS/TS, C-family, …) open
+- **HTML export.** Render the document to a styled `.html` and open it (`Ctrl+E`).
+- **Syntax highlighting.** Code files (JSON, Swift, JS/TS, C-family, …) open
   token-coloured instead of as Markdown.
-- **Quiet by design** — command palette (`Ctrl+P`), word wrap, line numbers,
+- **Quiet by design.** Command palette (`Ctrl+P`), word wrap, line numbers,
   undo/redo, and per-file cursor memory, all out of the way until you want them.
 
 ## Philosophy
 
-editxr is for writing prose and notes without ceremony. Three ideas guide it:
+editxr styles the document in the buffer, not in a preview pane. The line under
+your cursor stays raw text you can edit, and everything else is rendered, so
+you're always editing the real file.
 
-- **See it, don't preview it.** The document is the canvas — no split pane, no
-  separate render window.
-- **AI is an edit, not a conversation.** A model proposes a change to a section;
-  you accept or reject it. Nothing lands that you didn't approve.
-- **Local-first, yours to tweak.** Plain Swift, a hand-editable JSON config, and
-  an offline mode — your terminal, your rules.
+The AI works the same way: it suggests a change and you approve it. You pick a
+section, describe what you want, and get a diff to accept or reject. There's no
+chat to manage, and nothing is applied behind your back.
+
+It stays local-first: plain Swift, a JSON config you can hand-edit, and an
+offline mode, so it runs with no account and no network.
 
 ## Install
 
@@ -119,8 +120,8 @@ fails to compile (it uses the Command Line Tools toolchain):
 ```
 
 Requires macOS 12+ and a Swift 5.9+ toolchain. It also builds and runs on
-Linux (Swift 6+) — only the OpenAI OAuth sign-in is macOS-only; the other LLM
-providers work everywhere.
+Linux (Swift 6+); there, only the OpenAI OAuth sign-in is unavailable, and the
+other LLM providers work as usual.
 
 ## Keybindings
 
@@ -156,14 +157,14 @@ the next match and wraps; `↑`/`←` steps back. `Enter` keeps the matches so
 
 Open the command palette (`Ctrl+P`) → **LLM settings** to pick a provider:
 
-- **LM Studio** — talks to an OpenAI-compatible endpoint, by default
+- **LM Studio.** Talks to an OpenAI-compatible endpoint, by default
   `http://localhost:1234`.
-- **OpenAI** — sign in via OAuth (set `OPENAI_OAUTH_CLIENT_ID` in your
+- **OpenAI.** Sign in via OAuth (set `OPENAI_OAUTH_CLIENT_ID` in your
   environment first).
-- **OpenRouter** — set your API key and a model
+- **OpenRouter.** Set your API key and a model
   (e.g. `anthropic/claude-3.5-sonnet`).
-- **Mock (offline)** — a deterministic local transform, handy for trying the
-  edit/review UI with no network.
+- **Mock (offline).** A deterministic local transform for trying the edit/review
+  UI with no network.
 
 Settings (theme, appearance, provider, keys) persist to
 `~/.config/editxr/config.json`. Per-file cursor positions are stored in
@@ -171,16 +172,16 @@ Settings (theme, appearance, provider, keys) persist to
 
 ## Roadmap
 
-- [ ] **Homebrew tap** — publish `pixdeo/homebrew-tap` with the formula so
+- [ ] **Homebrew tap.** Publish `pixdeo/homebrew-tap` with the formula so
   `brew install pixdeo/tap/editxr` works.
-- [ ] **Inline image rendering** — draw Markdown images (`![alt](pic.png)`)
+- [ ] **Inline image rendering.** Draw Markdown images (`![alt](pic.png)`)
   directly in the editor using terminal graphics protocols (iTerm2 inline
   images / Kitty graphics / Sixel), with a block-character fallback for
   terminals without support. Needs terminal-capability detection, image
   decoding (via the OS image APIs, no extra deps), and reserving / clearing the
-  image's cell rectangle as the view scrolls. (Video isn't a terminal protocol —
-  it would be frame-by-frame image playback; animated GIFs already animate in
-  iTerm2.)
+  image's cell rectangle as the view scrolls. (Video isn't a terminal protocol;
+  it would be frame-by-frame image playback, and animated GIFs already animate
+  in iTerm2.)
 
 ## License
 
