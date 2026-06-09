@@ -22,7 +22,14 @@ git clone --depth 1 "$REPO" "$tmp"
 echo "==> Building (release)"
 ( cd "$tmp" && swift build -c release )
 
-mkdir -p "$PREFIX"
-install -m 0755 "$tmp/.build/release/editxr" "$PREFIX/editxr"
+bin="$tmp/.build/release/editxr"
+# Build runs as the current user; only the copy into PREFIX may need root.
+if mkdir -p "$PREFIX" 2>/dev/null && install -m 0755 "$bin" "$PREFIX/editxr" 2>/dev/null; then
+    :
+else
+    echo "==> $PREFIX needs elevated permissions; using sudo for the copy"
+    sudo mkdir -p "$PREFIX"
+    sudo install -m 0755 "$bin" "$PREFIX/editxr"
+fi
 echo "==> Installed editxr to $PREFIX/editxr"
 "$PREFIX/editxr" --version

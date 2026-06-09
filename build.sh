@@ -12,9 +12,23 @@
 #   ./build.sh <args...>    # pass any args straight to swift
 set -euo pipefail
 
-export DEVELOPER_DIR=/Library/Developer/CommandLineTools
-SWIFT=/Library/Developer/CommandLineTools/usr/bin/swift
+# On this macOS box the CommandLineTools toolchain builds cleanly (the beta
+# Xcode SDK doesn't); elsewhere (incl. Linux) just use swift from PATH.
+if [ -x /Library/Developer/CommandLineTools/usr/bin/swift ]; then
+    export DEVELOPER_DIR=/Library/Developer/CommandLineTools
+    SWIFT=/Library/Developer/CommandLineTools/usr/bin/swift
+else
+    SWIFT="$(command -v swift)"
+fi
 PREFIX="${PREFIX:-/usr/local/bin}"
+
+# Copy a file into PREFIX, escalating to sudo only if PREFIX isn't writable.
+install_bin() {
+    local src="$1" dest="$2"
+    if install -m 0755 "$src" "$dest" 2>/dev/null; then return; fi
+    echo "==> $dest needs elevated permissions; using sudo for the copy"
+    sudo install -m 0755 "$src" "$dest"
+}
 
 if [ "$#" -eq 0 ]; then
     exec "$SWIFT" build
@@ -30,8 +44,8 @@ fi
 if [ "$1" = "install" ]; then
     echo "Building release…"
     "$SWIFT" build -c release
-    BIN="$(pwd)/.build/release/editxr"
-    install -m 0755 "$BIN" "$PREFIX/editxr"
+    mkdir -p "$PREFIX" 2>/dev/null || sudo mkdir -p "$PREFIX"
+    install_bin "$(pwd)/.build/release/editxr" "$PREFIX/editxr"
     echo "Installed editxr -> $PREFIX/editxr"
     exit 0
 fi
