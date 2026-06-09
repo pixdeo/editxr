@@ -1,0 +1,27 @@
+# editxr
+
+> A WYSIWYG Markdown editor for the terminal. AI-assisted, 100% Swift, zero dependencies. macOS and Linux. Open source (MIT).
+
+editxr renders Markdown live as you type — headings, lists, tables, and code are
+styled in place in the terminal buffer, not in a split preview. The line under the
+cursor stays raw, editable text. You can hand a whole section to an LLM and review
+the change as an inline diff before it lands.
+
+## What it does
+- Live Markdown rendering in the terminal (WYSIWYG): headings, emphasis, lists, task lists, tables, blockquotes, code blocks, and YAML frontmatter.
+- AI section editing: select a section, describe a change, and accept or reject it as a red/green inline diff. No chat thread; nothing is applied without approval.
+- Bring your own model: LM Studio (local), OpenAI, OpenRouter, or an offline mock that needs no backend.
+- 12 themes, light or dark, chosen from a command palette.
+- Incremental find, HTML export, syntax highlighting, word wrap, and per-file cursor memory.
+- Native Swift binary with no runtime dependencies. Runs on macOS 12+ and Linux.
+
+## Install
+- One line (builds from source): `curl -fsSL https://raw.githubusercontent.com/pixdeo/editxr/main/install.sh | bash`
+- Homebrew: `brew install pixdeo/tap/editxr`
+- Signed binaries: https://github.com/pixdeo/editxr/releases
+
+## Links
+- Website: https://editxr.org
+- Source code: https://github.com/pixdeo/editxr
+- README (full feature list and keybindings): https://github.com/pixdeo/editxr/blob/main/README.md
+- License: MIT, © Pixdeo LTD

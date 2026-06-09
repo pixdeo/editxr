@@ -17,6 +17,27 @@
 <meta name="twitter:title" content="editxr — a WYSIWYG Markdown editor for the terminal">
 <meta name="twitter:description" content="Markdown rendered as you type, AI edits you review as inline diffs, zero dependencies. macOS & Linux. Open source.">
 <meta name="twitter:image" content="https://editxr.org/editxr.png">
+<link rel="alternate" type="text/markdown" href="/llms.txt" title="llms.txt">
+
+<!-- Structured data for search engines and AI agents -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "editxr",
+  "applicationCategory": "DeveloperApplication",
+  "operatingSystem": "macOS, Linux",
+  "description": "A WYSIWYG Markdown editor for the terminal. It renders Markdown live as you type and edits whole sections with an LLM, shown as an inline diff you accept or reject. Native Swift, zero dependencies. Open source (MIT).",
+  "url": "https://editxr.org",
+  "downloadUrl": "https://github.com/pixdeo/editxr",
+  "codeRepository": "https://github.com/pixdeo/editxr",
+  "license": "https://opensource.org/licenses/MIT",
+  "programmingLanguage": "Swift",
+  "isAccessibleForFree": true,
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
+  "author": { "@type": "Organization", "name": "Pixdeo LTD" }
+}
+</script>
 
 <style>
   :root {
@@ -79,6 +100,7 @@
   h2 .hash { color: var(--accent); }
 
   /* Demo */
+  .sr-intro { color: var(--muted); font-size: .9rem; text-align: center; max-width: 640px; margin: 0 auto 2rem; }
   .clips { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.25rem; }
   .clips figure { margin: 0; }
   .clips video { width: 100%; border: 1px solid var(--border); border-radius: 10px; display: block; }
@@ -136,6 +158,7 @@
 
 <section class="demo">
   <div class="wrap">
+    <p class="sr-intro">Short clips of editxr in use: live Markdown rendering, AI section editing as an inline diff, themes, the rendered/raw toggle, incremental find, and instant startup.</p>
     <div class="clips">
       <figure><video src="render.mp4" autoplay loop muted playsinline preload="metadata"></video><figcaption>Renders as you type</figcaption></figure>
       <figure><video src="ai.mp4" autoplay loop muted playsinline preload="metadata"></video><figcaption>AI section editing</figcaption></figure>
@@ -206,6 +229,7 @@
   <div class="wrap">
     <a href="https://github.com/pixdeo/editxr">GitHub</a> ·
     <a href="https://github.com/pixdeo/editxr/blob/main/LICENSE">MIT</a> ·
+    <a href="/llms.txt">llms.txt</a> ·
     © 2026 Pixdeo LTD
   </div>
 </footer>
