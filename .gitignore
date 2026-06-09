@@ -1,4 +1,7 @@
 .build/
+.build-arm64/
+.build-x86/
+.build-universal/
 .swiftpm/
 *.xcodeproj
 *.xcworkspace

@@ -3,7 +3,7 @@
 # binary, zipped for a GitHub release.
 #
 # Prerequisites (one-time):
-#   - A "Developer ID Application: Pixdeo LTD" certificate in your keychain.
+#   - A "Developer ID Application: Pixdeo, Ltd" certificate in your keychain.
 #   - Notary credentials stored as a profile:
 #       xcrun notarytool store-credentials pixdeo \
 #         --apple-id you@pixdeo.com --team-id TEAMID --password <app-specific-pw>
@@ -14,17 +14,26 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 VERSION="${1:-$(git describe --tags --abbrev=0 2>/dev/null || echo dev)}"
-SIGN_ID="${SIGN_ID:-Developer ID Application: Pixdeo LTD}"
+SIGN_ID="${SIGN_ID:-Developer ID Application: Pixdeo, Ltd (U32445N559)}"
 NOTARY_PROFILE="${NOTARY_PROFILE:-pixdeo}"
 # Match build.sh: the Command Line Tools toolchain builds cleanly here.
 export DEVELOPER_DIR="${DEVELOPER_DIR:-/Library/Developer/CommandLineTools}"
 SWIFT="$DEVELOPER_DIR/usr/bin/swift"
 
+# Build each arch separately with the native build system, then lipo: the
+# multi-arch `swift build --arch arm64 --arch x86_64` needs xcbuild, which only
+# ships with full Xcode (and this repo builds under Command Line Tools to dodge
+# the beta SDK). x86_64 is cross-compiled via an explicit target triple.
 echo "==> Building universal release ($VERSION)"
-"$SWIFT" build -c release --arch arm64 --arch x86_64
-BIN=".build/apple/Products/Release/editxr"
-[ -f "$BIN" ] || BIN=".build/release/editxr"
-lipo -info "$BIN" || true
+"$SWIFT" build -c release --scratch-path .build-arm64
+"$SWIFT" build -c release --scratch-path .build-x86 \
+  -Xswiftc -target -Xswiftc x86_64-apple-macosx12.0 \
+  -Xcc -target -Xcc x86_64-apple-macosx12.0 \
+  -Xlinker -arch -Xlinker x86_64
+BIN=".build-universal/editxr"
+mkdir -p .build-universal
+lipo -create .build-arm64/release/editxr .build-x86/release/editxr -output "$BIN"
+lipo -info "$BIN"
 
 echo "==> Signing as: $SIGN_ID"
 codesign --force --options runtime --timestamp --sign "$SIGN_ID" "$BIN"
