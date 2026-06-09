@@ -79,7 +79,11 @@
   h2 .hash { color: var(--accent); }
 
   /* Demo */
-  .demo video { width: 100%; border: 1px solid var(--border); border-radius: 10px; display: block; }
+  .clips { display: grid; grid-template-columns: repeat(2, 1fr); gap: 1.25rem; }
+  .clips figure { margin: 0; }
+  .clips video { width: 100%; border: 1px solid var(--border); border-radius: 10px; display: block; }
+  .clips figcaption { color: var(--muted); font-size: .85rem; margin-top: .5rem; text-align: center; }
+  @media (max-width: 640px) { .clips { grid-template-columns: 1fr; } }
 
   /* Features */
   .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
@@ -132,7 +136,14 @@
 
 <section class="demo">
   <div class="wrap">
-    <video src="themes.mp4" autoplay loop muted playsinline></video>
+    <div class="clips">
+      <figure><video src="render.mp4" autoplay loop muted playsinline preload="metadata"></video><figcaption>Renders as you type</figcaption></figure>
+      <figure><video src="ai.mp4" autoplay loop muted playsinline preload="metadata"></video><figcaption>AI section editing</figcaption></figure>
+      <figure><video src="themes.mp4" autoplay loop muted playsinline preload="metadata"></video><figcaption>Themes, light or dark</figcaption></figure>
+      <figure><video src="raw.mp4" autoplay loop muted playsinline preload="metadata"></video><figcaption>Rendered &harr; raw</figcaption></figure>
+      <figure><video src="find.mp4" autoplay loop muted playsinline preload="metadata"></video><figcaption>Incremental find</figcaption></figure>
+      <figure><video src="open.mp4" autoplay loop muted playsinline preload="metadata"></video><figcaption>Opens instantly</figcaption></figure>
+    </div>
   </div>
 </section>
 

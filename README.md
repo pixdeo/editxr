@@ -26,13 +26,29 @@ This is a **test** with *markdown*.
 
 ![editxr](demo/demo.png)
 
-**Themes** — pick a palette from the nested Themes menu with live preview, and
-switch dark / light.
+**Renders as you type** — Markdown styled in place; the line you're on stays raw.
 
-![Themes and appearance](demo/themes.gif)
+![Live Markdown rendering](demo/render.gif)
 
-> **More clips coming:** live Markdown rendering, AI section editing, and
-> find + HTML export.
+**AI section editing** — describe a change, review it as an inline diff.
+
+![AI section editing](demo/ai.gif)
+
+**Themes** — light or dark, from the command palette.
+
+![Themes](demo/themes.gif)
+
+**Rendered ↔ raw** — flip the view with `Ctrl+R`.
+
+![Rendered and raw](demo/raw.gif)
+
+**Incremental find** — `Ctrl+F` to search, `Ctrl+G` to step through matches.
+
+![Incremental find](demo/find.gif)
+
+**Opens instantly** — even on large files.
+
+![Opens instantly](demo/open.gif)
 
 ## Features
 
@@ -157,8 +173,6 @@ Settings (theme, appearance, provider, keys) persist to
 
 - [ ] **Homebrew tap** — publish `pixdeo/homebrew-tap` with the formula so
   `brew install pixdeo/tap/editxr` works.
-- [ ] **Demo clips** — record the remaining demos (live rendering, AI editing,
-  find + HTML export).
 - [ ] **Inline image rendering** — draw Markdown images (`![alt](pic.png)`)
   directly in the editor using terminal graphics protocols (iTerm2 inline
   images / Kitty graphics / Sixel), with a block-character fallback for
