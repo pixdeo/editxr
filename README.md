@@ -6,8 +6,8 @@ section, describe a change, and review the edit as an inline diff before
 applying it.
 
 It's **ultra fast** — a native Swift binary with no runtime dependencies, so
-it launches instantly and stays responsive even on large files. No splash, no
-spinner, no waiting: open a file and start typing.
+it launches instantly and stays responsive even on large files. No waiting: 
+open a file and start typing.
 
 ```
 test.md — My document
