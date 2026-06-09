@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>editxr — a WYSIWYG Markdown editor for the terminal</title>
+<meta name="description" content="Render Markdown live as you type, edit sections with reviewable AI diffs, and never leave your shell. Native Swift, zero dependencies, macOS & Linux. Open source.">
+<link rel="icon" href="editxr.png">
+
+<!-- Social cards -->
+<meta property="og:type" content="website">
+<meta property="og:title" content="editxr — a WYSIWYG Markdown editor for the terminal">
+<meta property="og:description" content="Markdown rendered as you type, AI edits you review as inline diffs, zero dependencies. macOS & Linux. Open source.">
+<meta property="og:url" content="https://editxr.org">
+<meta property="og:image" content="https://editxr.org/editxr.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="editxr — a WYSIWYG Markdown editor for the terminal">
+<meta name="twitter:description" content="Markdown rendered as you type, AI edits you review as inline diffs, zero dependencies. macOS & Linux. Open source.">
+<meta name="twitter:image" content="https://editxr.org/editxr.png">
+
+<style>
+  :root {
+    --bg: #1c1a18;
+    --surface: #262320;
+    --border: #3a352f;
+    --text: #ebe5db;
+    --muted: #8a8379;
+    --accent: #cc785c;
+    --accent-soft: rgba(204, 120, 92, 0.14);
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font-family: var(--mono);
+    line-height: 1.6;
+    -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 920px; margin: 0 auto; padding: 0 1.25rem; }
+  section { padding: 4rem 0; border-top: 1px solid var(--border); }
+
+  /* Hero */
+  .hero { text-align: center; padding: 5rem 0 4rem; border-top: 0; }
+  .hero img { width: min(420px, 80%); height: auto; }
+  .tagline { color: var(--muted); font-size: 1.05rem; margin: 0.5rem 0 2rem; }
+  .tagline b { color: var(--text); font-weight: 600; }
+
+  /* Install command */
+  .cmd {
+    display: flex; align-items: center; gap: .75rem;
+    max-width: 680px; margin: 0 auto;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: .8rem 1rem; text-align: left;
+  }
+  .cmd code { color: var(--text); font-size: .9rem; overflow-x: auto; white-space: nowrap; flex: 1; }
+  .cmd code .p { color: var(--accent); }
+  .cmd button {
+    flex: none; cursor: pointer; font-family: var(--mono); font-size: .8rem;
+    color: var(--muted); background: transparent; border: 1px solid var(--border);
+    border-radius: 6px; padding: .3rem .6rem;
+  }
+  .cmd button:hover { color: var(--text); border-color: var(--accent); }
+
+  .actions { margin-top: 1.25rem; display: flex; gap: .75rem; justify-content: center; flex-wrap: wrap; }
+  .btn {
+    display: inline-block; padding: .55rem 1.1rem; border-radius: 8px;
+    border: 1px solid var(--border); color: var(--text); font-size: .9rem;
+  }
+  .btn:hover { border-color: var(--accent); text-decoration: none; }
+  .btn.primary { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+
+  h2 { font-size: 1.4rem; margin: 0 0 1.5rem; }
+  h2 .hash { color: var(--accent); }
+
+  /* Demo */
+  .demo video { width: 100%; border: 1px solid var(--border); border-radius: 10px; display: block; }
+
+  /* Features */
+  .features { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1rem; }
+  .feature {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1.1rem 1.2rem;
+  }
+  .feature h3 { margin: 0 0 .4rem; font-size: 1rem; color: var(--accent); }
+  .feature p { margin: 0; color: var(--muted); font-size: .92rem; }
+
+  /* Steps */
+  ol.steps { counter-reset: step; list-style: none; padding: 0; margin: 0; display: grid; gap: .75rem; }
+  ol.steps li {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: .85rem 1rem; color: var(--muted);
+  }
+  ol.steps li b { color: var(--text); }
+  ol.steps code, .inline { color: var(--accent); background: var(--accent-soft); padding: .1em .4em; border-radius: 4px; }
+
+  /* Install grid */
+  .install pre {
+    background: var(--surface); border: 1px solid var(--border); border-radius: 10px;
+    padding: 1rem; overflow-x: auto; color: var(--text); font-size: .88rem; margin: .5rem 0 1.25rem;
+  }
+  .install .label { color: var(--muted); font-size: .85rem; }
+
+  footer { border-top: 1px solid var(--border); padding: 2.5rem 0 3rem; text-align: center; color: var(--muted); font-size: .85rem; }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <img src="editxr.png" alt="editxr">
+    <p class="tagline">A <b>WYSIWYG</b> Markdown editor for the terminal — AI-assisted, zero dependencies.</p>
+
+    <div class="cmd">
+      <code id="cmd"><span class="p">curl</span> -fsSL https://raw.githubusercontent.com/pixdeo/editxr/main/install.sh | <span class="p">bash</span></code>
+      <button onclick="copyCmd(this)">copy</button>
+    </div>
+
+    <div class="actions">
+      <a class="btn primary" href="https://github.com/pixdeo/editxr">View on GitHub</a>
+      <a class="btn" href="#install">Other ways to install</a>
+    </div>
+  </div>
+</header>
+
+<section class="demo">
+  <div class="wrap">
+    <video src="themes.mp4" autoplay loop muted playsinline></video>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="hash">#</span> What it does</h2>
+    <div class="features">
+      <div class="feature">
+        <h3>Renders as you type</h3>
+        <p>Headings, lists, tables, and code styled in place — not in a split preview. The line you're on stays plain, editable text.</p>
+      </div>
+      <div class="feature">
+        <h3>AI edits you review</h3>
+        <p>Select a section, describe the change, and accept or reject it as a red/green inline diff. No chat thread, nothing lands unapproved.</p>
+      </div>
+      <div class="feature">
+        <h3>Bring your own model</h3>
+        <p>LM Studio (local), OpenAI, OpenRouter, or an offline mock that needs no backend at all.</p>
+      </div>
+      <div class="feature">
+        <h3>12 themes, light or dark</h3>
+        <p>Clay, Dracula, Nord, Catppuccin, Tokyo Night and more — picked from a rounded command palette.</p>
+      </div>
+      <div class="feature">
+        <h3>Fast &amp; dependency-free</h3>
+        <p>A native Swift binary. It opens instantly and stays fast on large files. macOS &amp; Linux.</p>
+      </div>
+      <div class="feature">
+        <h3>Everything else</h3>
+        <p>Incremental find, HTML export, syntax highlighting, word wrap, and per-file cursor memory.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="hash">#</span> How it works</h2>
+    <ol class="steps">
+      <li><b><code>editxr notes.md</code></b> — open or create a file.</li>
+      <li><b>Type.</b> It renders live; the cursor line stays raw.</li>
+      <li><b><span class="inline">Ctrl+Space</span></b> — ask AI for an edit, review the diff, press <span class="inline">y</span> to keep it.</li>
+      <li><b><span class="inline">Ctrl+S</span></b> and you're done.</li>
+    </ol>
+  </div>
+</section>
+
+<section class="install" id="install">
+  <div class="wrap">
+    <h2><span class="hash">#</span> Install</h2>
+    <p class="label">One line (builds from source; needs Xcode or the Command Line Tools, or Swift on Linux):</p>
+    <pre>curl -fsSL https://raw.githubusercontent.com/pixdeo/editxr/main/install.sh | bash</pre>
+    <p class="label">Homebrew:</p>
+    <pre>brew install pixdeo/tap/editxr</pre>
+    <p class="label">Or grab a signed, notarised binary from the <a href="https://github.com/pixdeo/editxr/releases">releases</a>.</p>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <a href="https://github.com/pixdeo/editxr">GitHub</a> ·
+    <a href="https://github.com/pixdeo/editxr/blob/main/LICENSE">MIT</a> ·
+    © 2026 Pixdeo LTD
+  </div>
+</footer>
+
+<script>
+  function copyCmd(btn) {
+    var text = "curl -fsSL https://raw.githubusercontent.com/pixdeo/editxr/main/install.sh | bash";
+    navigator.clipboard.writeText(text).then(function () {
+      var old = btn.textContent; btn.textContent = "copied"; btn.style.color = "var(--accent)";
+      setTimeout(function () { btn.textContent = old; btn.style.color = ""; }, 1500);
+    });
+  }
+</script>
+</body>
+</html>
