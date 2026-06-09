@@ -79,7 +79,8 @@ class EditorState {
         self.fullTable = config.fullTable ?? true
         self.leftMargin = max(0, min(8, config.leftMargin ?? 1))
         self.scrollMargin = max(0, min(20, config.scrollOff ?? 4))
-        self.themeName = config.theme.flatMap(ThemeName.init(rawValue:)) ?? .system
+        // Clay is the default on first run; a saved choice still wins.
+        self.themeName = config.theme.flatMap(ThemeName.init(rawValue:)) ?? .clay
         self.appearance = config.appearance.flatMap(Appearance.init(rawValue:)) ?? .auto
         Theme.name = self.themeName
         Theme.mode = self.appearance.mode
