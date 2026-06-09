@@ -1,11 +1,15 @@
-# editxr
+<p align="center">
+  <img src="editxr.png" alt="editxr" width="420">
+</p>
 
-A minimalist Markdown editor for the terminal, written in Swift. It renders
-Markdown live as you type — a WYSIWYG terminal editor where headings, lists,
-tables, and code are styled in place, not in a split preview — and lets you edit
-whole sections with an LLM, shown as an inline diff you accept or reject. A
-native Swift binary with zero dependencies, it opens instantly and stays fast on
-large files.
+<p align="center">
+  A WYSIWYG Markdown editor for the terminal — AI-assisted, zero dependencies.
+</p>
+
+It renders Markdown live as you type — headings, lists, tables, and code styled
+in place, not in a split preview — and lets you edit whole sections with an LLM,
+shown as an inline diff you accept or reject. Written in Swift as a native
+binary, it opens instantly and stays fast on large files.
 
 ```
 test.md — My document
