@@ -25,6 +25,7 @@ class EditorState: ObservableObject {
     @Published var showStatusBar: Bool = true
     @Published var showHelp: Bool = true
     @Published var showLineNumbers: Bool = false
+    @Published var statusBarBig: Bool = true
     @Published var wordWrap: Bool = true
     @Published var scrollPastEnd: Bool = true
     @Published var fullTable: Bool = true
@@ -84,6 +85,7 @@ class EditorState: ObservableObject {
         Theme.mode = self.appearance.mode
         self.viewMode = config.renderMarkdown ? .normal : .raw
         self.showLineNumbers = config.showLineNumbers ?? false
+        self.statusBarBig = config.statusBarBig ?? true
         self.llmProvider = config.llmProvider
         self.openRouterKey = config.openRouterKey
         self.openRouterModel = config.openRouterModel
@@ -209,6 +211,11 @@ class EditorState: ObservableObject {
         showLineNumbers.toggle()
         saveConfig()
     }
+
+    func toggleStatusBarBig() {
+        statusBarBig.toggle()
+        saveConfig()
+    }
     
     func toggleHelp() {
         showHelp.toggle()
@@ -300,6 +307,7 @@ class EditorState: ObservableObject {
         config.showHelp = showHelp
         config.wordWrap = wordWrap
         config.showLineNumbers = showLineNumbers
+        config.statusBarBig = statusBarBig
         config.scrollPastEnd = scrollPastEnd
         config.fullTable = fullTable
         config.leftMargin = leftMargin

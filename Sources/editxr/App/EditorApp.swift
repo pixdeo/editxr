@@ -61,9 +61,15 @@ class EditorApp {
     private var spinnerTimer: DispatchSourceTimer?
     /// Last OSC 11 background sequence pushed to the terminal (avoid re-emitting).
     private var lastBackgroundOSC: String?
+    /// Vim-style welcome card, shown for an empty document until the first input.
+    private var showSplash = false
+    private var splashTimer: DispatchSourceTimer?
+    private var splashA = 0.0
+    private var splashB = 0.0
 
     init(state: EditorState) {
         self.state = state
+        showSplash = state.document.lines.allSatisfy { $0.isEmpty }
         state.onSavedIndicatorChanged = { [weak self] in
             self?.render()
         }
@@ -85,15 +91,26 @@ class EditorApp {
         }
     }
 
+    /// A toggle command that keeps the palette open and refreshes the menu so
+    /// the change previews live (close with Esc / ←) and any state labels update.
+    private func toggleCommand(_ title: String, _ shortcut: String, _ toggle: @escaping () -> Void) -> PaletteCommand {
+        return PaletteCommand(title: title, shortcut: shortcut, keepsOpen: true) { [weak self] in
+            guard let self = self else { return }
+            toggle()
+            self.commandPanel?.replaceCommands(self.buildCommands())
+        }
+    }
+
     private func buildCommands() -> [PaletteCommand] {
         var cmds: [PaletteCommand] = [
             PaletteCommand(title: "Save", shortcut: "^S") { [weak self] in self?.state.save() },
-            PaletteCommand(title: "Toggle raw view", shortcut: "^R") { [weak self] in self?.state.toggleViewMode() },
-            PaletteCommand(title: "Toggle word wrap", shortcut: "^W") { [weak self] in self?.state.toggleWordWrap() },
-            PaletteCommand(title: "Toggle line numbers", shortcut: "^L") { [weak self] in self?.state.toggleLineNumbers() },
-            PaletteCommand(title: "Toggle help bar", shortcut: "^/") { [weak self] in self?.state.toggleHelp() },
-            PaletteCommand(title: "Toggle scroll past end", shortcut: "") { [weak self] in self?.state.toggleScrollPastEnd() },
-            PaletteCommand(title: "Toggle full table borders", shortcut: "") { [weak self] in self?.state.toggleFullTable() },
+            toggleCommand("Toggle raw view", "^R") { [weak self] in self?.state.toggleViewMode() },
+            toggleCommand("Toggle word wrap", "^W") { [weak self] in self?.state.toggleWordWrap() },
+            toggleCommand("Toggle line numbers", "^L") { [weak self] in self?.state.toggleLineNumbers() },
+            toggleCommand("Toggle help bar", "^/") { [weak self] in self?.state.toggleHelp() },
+            toggleCommand("Toggle scroll past end", "") { [weak self] in self?.state.toggleScrollPastEnd() },
+            toggleCommand("Toggle big status bar", state.statusBarBig ? "big" : "slim") { [weak self] in self?.state.toggleStatusBarBig() },
+            toggleCommand("Toggle full table borders", "") { [weak self] in self?.state.toggleFullTable() },
             PaletteCommand(title: "Set left margin", shortcut: "\(state.leftMargin)") { [weak self] in
                 guard let self = self else { return }
                 self.commandPanel?.beginInput(prompt: "Left margin (columns, 0–8)", value: "\(self.state.leftMargin)", isSecret: false) { [weak self] value in
@@ -244,9 +261,29 @@ class EditorApp {
         
         hideCursor()
         render()
+        if showSplash { startSplashTimer() }
         dispatchMain()
     }
-    
+
+    /// Spin the welcome donut at ~16fps while the splash is up.
+    private func startSplashTimer() {
+        guard splashTimer == nil else { return }
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 0.06, repeating: 0.06)
+        timer.setEventHandler { [weak self] in
+            guard let self = self, self.showSplash else { return }
+            self.splashA += 0.045   // gentle buoyancy phase
+            self.render()
+        }
+        timer.resume()
+        splashTimer = timer
+    }
+
+    private func stopSplashTimer() {
+        splashTimer?.cancel()
+        splashTimer = nil
+    }
+
     private func hideCursor() {
         print("\u{1B}[?25l", terminator: "")
         fflush(stdout)
@@ -260,6 +297,10 @@ class EditorApp {
     private func enterAlternateScreen() {
         print("\u{1B}[?1049h", terminator: "")
         print("\u{1B}[?25l", terminator: "")
+        // Disable autowrap: editxr pads/truncates every line itself, and writing a
+        // glyph to the last column otherwise leaves the cursor "pending wrap", so
+        // the trailing erase-to-EOL can drop that last cell (e.g. a box border).
+        print("\u{1B}[?7l", terminator: "")
         print("\u{1B}[?2004h", terminator: "")
         // Mouse reporting (button events + SGR coords) for trackpad/wheel scroll.
         print("\u{1B}[?1000h\u{1B}[?1006h", terminator: "")
@@ -268,9 +309,12 @@ class EditorApp {
 
     private func exitAlternateScreen() {
         // Restore the terminal's default foreground/background (undo OSC 10/11).
-        print("\u{1B}]110\u{1B}\\\u{1B}]111\u{1B}\\", terminator: "")
+        if terminalTrueColor {
+            print("\u{1B}]110\u{07}\u{1B}]111\u{07}", terminator: "")
+        }
         print("\u{1B}[?1000l\u{1B}[?1006l", terminator: "")
         print("\u{1B}[?2004l", terminator: "")
+        print("\u{1B}[?7h", terminator: "")   // restore autowrap
         print("\u{1B}[?25h", terminator: "")
         print("\u{1B}[?1049l", terminator: "")
         fflush(stdout)
@@ -294,6 +338,13 @@ class EditorApp {
     private func handleInput() {
         let data = FileHandle.standardInput.availableData
         guard let string = String(data: data, encoding: .utf8) else { return }
+
+        // The welcome card dismisses as soon as you touch anything.
+        if showSplash {
+            showSplash = false
+            stopSplashTimer()
+            render()
+        }
 
         // Trackpad / mouse-wheel scroll (SGR mouse reporting). Consume all mouse
         // events so clicks/drags don't leak into the editor as garbage.
@@ -708,6 +759,10 @@ class EditorApp {
         if !modalLines.isEmpty {
             reservedLines += modalLines.count
         }
+        // The big status bar is a 3-row box (2 extra rows over the slim one).
+        if state.statusBarBig {
+            reservedLines += 2
+        }
 
         let contentHeight = height - reservedLines
         let gutter = gutterWidth()
@@ -720,23 +775,27 @@ class EditorApp {
         var lines: [String] = [padToWidth(margin + renderTopBar(width: width - state.leftMargin), width: width)]
 
         var content: [String]
-        switch state.viewMode {
-        case .normal:
-            // Code files get syntax highlighting; Markdown gets live rendering.
-            // While reviewing an AI edit, fall back to the Markdown path so the
-            // inline diff shows.
-            if let hl = state.syntaxHighlighter, state.pendingEdit == nil {
-                content = renderCodeMode(highlighter: hl, width: contentWidth, height: contentHeight, gutterWidth: gutter)
-            } else {
-                content = renderNormalMode(width: contentWidth, height: contentHeight, gutterWidth: gutter)
+        if showSplash && state.document.lines.allSatisfy({ $0.isEmpty }) {
+            content = renderSplash(totalWidth: width, height: contentHeight)
+        } else {
+            switch state.viewMode {
+            case .normal:
+                // Code files get syntax highlighting; Markdown gets live rendering.
+                // While reviewing an AI edit, fall back to the Markdown path so the
+                // inline diff shows.
+                if let hl = state.syntaxHighlighter, state.pendingEdit == nil {
+                    content = renderCodeMode(highlighter: hl, width: contentWidth, height: contentHeight, gutterWidth: gutter)
+                } else {
+                    content = renderNormalMode(width: contentWidth, height: contentHeight, gutterWidth: gutter)
+                }
+            case .raw:
+                content = renderRawMode(width: contentWidth, height: contentHeight, gutterWidth: gutter)
             }
-        case .raw:
-            content = renderRawMode(width: contentWidth, height: contentHeight, gutterWidth: gutter)
         }
 
+        // Filler rows past the end of the document are simply blank.
         while content.count < contentHeight {
-            let emptyGutter = renderGutter(lineNumber: 0, width: gutter).replacingOccurrences(of: String(0), with: " ")
-            content.append(padToWidth(emptyGutter, width: width))
+            content.append(padToWidth("", width: width))
         }
         lines += content
 
@@ -744,7 +803,13 @@ class EditorApp {
             lines.append(padToWidth(modalLine, width: width))
         }
         
-        lines.append(padToWidth(renderStatusBar(width: width), width: width))
+        if state.statusBarBig {
+            for row in renderStatusBarBig(width: width) {
+                lines.append(padToWidth(row, width: width))
+            }
+        } else {
+            lines.append(padToWidth(renderStatusBar(width: width), width: width))
+        }
 
         if state.isReviewing {
             lines.append(padToWidth(renderReviewHintBar(width: width), width: width))
@@ -756,8 +821,11 @@ class EditorApp {
 
         overlayCommandPanel(into: &lines, width: width, height: height)
 
-        // Erase to end of each line so wide glyphs / shorter frames leave no residue.
-        return lines.map { $0 + "\u{1B}[K" }.joined(separator: "\n")
+        // Erase each line *before* writing it (not after): a trailing erase-to-EOL
+        // would wipe a glyph sitting in the last column (e.g. a box border) on
+        // terminals like Ghostty. Lines are LF-joined; ONLCR returns the cursor to
+        // column 0, where \e[K clears the whole row ahead of the content.
+        return lines.map { "\u{1B}[K" + $0 }.joined(separator: "\n")
     }
 
     private func overlayCommandPanel(into lines: inout [String], width: Int, height: Int) {
@@ -2198,6 +2266,48 @@ class EditorApp {
         return result
     }
     
+    private func splashCenterLine(_ text: String, _ style: String, _ width: Int) -> String {
+        let leftPad = max(0, (width - text.displayWidth) / 2)
+        let s = String(repeating: " ", count: leftPad) + "\(style)\(text)\(Theme.reset)"
+        return padToWidth(s, width: width)
+    }
+
+    /// Welcome screen for an empty document: a spinning ASCII donut over the app
+    /// name, tagline, and a dismiss hint. The donut is tinted with the accent and
+    /// animated by `splashA`/`splashB`; tiny terminals get just the text.
+    private func renderSplash(totalWidth: Int, height: Int) -> [String] {
+        var block: [String] = []
+
+        let logoH = min(max(0, height - 8), 16)
+        let logoW = min(totalWidth, 52)
+        if logoH >= 8 && logoW >= 24 {
+            // Gentle 3-axis float: a little rotation on each of Z/Y/X, at
+            // different frequencies so it bobs like a slowly tumbling object.
+            let rz = sin(splashA * 0.8) * 0.11
+            let ry = sin(splashA * 1.1 + 0.7) * 0.22
+            let rx = sin(splashA * 0.6 + 1.7) * 0.15
+            let grid = SplashRenderer.wordmark(rx: rx, ry: ry, rz: rz, width: logoW, height: logoH)
+            let leftPad = String(repeating: " ", count: max(0, (totalWidth - logoW) / 2))
+            for row in grid {
+                block.append(padToWidth("\(leftPad)\(Theme.accent)\(row)\(Theme.reset)", width: totalWidth))
+            }
+            block.append(padToWidth("", width: totalWidth))
+        } else {
+            // Too small for the spinning logo: fall back to plain text.
+            block.append(splashCenterLine("\(AppInfo.name) \(AppInfo.version)", "\(Theme.bold)\(Theme.accent)", totalWidth))
+            block.append(padToWidth("", width: totalWidth))
+        }
+
+        block.append(splashCenterLine("v\(AppInfo.version)  ·  a minimalist Markdown editor", Theme.textMuted, totalWidth))
+
+        let slack = max(0, height - block.count)
+        let topBlanks = slack / 2
+        var lines = Array(repeating: padToWidth("", width: totalWidth), count: topBlanks)
+        lines += block
+        while lines.count < height { lines.append(padToWidth("", width: totalWidth)) }
+        return Array(lines.prefix(max(0, height)))
+    }
+
     private func renderTopBar(width: Int) -> String {
         let name = (state.filePath as NSString).lastPathComponent
         // File-type glyph (Nerd Font) reflecting what's open.
@@ -2251,8 +2361,35 @@ class EditorApp {
         return nil
     }
 
+    /// Slim status bar: a single row led by the accent bar.
     private func renderStatusBar(width: Int) -> String {
+        return "\(Theme.accent)▌\(Theme.statusBarBg)\(statusInner(innerWidth: width - 1))\(Theme.reset)"
+    }
+
+    /// Big status bar: the same content framed in a rounded 3-row box. No fill
+    /// behind the content — the border sits on the editor background.
+    private func renderStatusBarBig(width: Int) -> [String] {
+        let mid = String(repeating: "─", count: max(0, width - 2))
+        let content = "\(Theme.accent)│ \(statusInner(innerWidth: max(0, width - 4))) \(Theme.accent)│\(Theme.reset)"
+        return [
+            "\(Theme.accent)╭\(mid)╮\(Theme.reset)",
+            content,
+            "\(Theme.accent)╰\(mid)╯\(Theme.reset)",
+        ]
+    }
+
+    /// The status content (dirty/find indicator on the left, word count and
+    /// cursor position on the right) laid out to `innerWidth` visible columns.
+    /// Assumes the status-bar background is already active.
+    private func statusInner(innerWidth: Int) -> String {
         let doc = state.document
+
+        // While the welcome card is up, the status line carries the dismiss hint.
+        if showSplash {
+            let hint = "type any character to start"
+            let pad = max(0, innerWidth - hint.displayWidth)
+            return "\(Theme.italic)\(Theme.textMuted)\(hint)\(Theme.reset)\(Theme.statusBarText)\(String(repeating: " ", count: pad))"
+        }
 
         // Build the left segment, tracking visible width separately from the
         // styled string (escape sequences and the ◉ glyph aren't 1 char each).
@@ -2290,10 +2427,9 @@ class EditorApp {
         }
 
         let right = "\(doc.wordCount) words | Ln \(doc.cursorLine + 1), Col \(doc.cursorColumn + 1)"
-        let contentWidth = width - 1
-        let padding = contentWidth - leftVisible - right.count
+        let padding = innerWidth - leftVisible - right.count
         let spaces = String(repeating: " ", count: max(0, padding))
-        return "\(Theme.accent)▌\(Theme.statusBarBg)\(Theme.statusBarText)\(left)\(spaces)\(right)\(Theme.reset)"
+        return "\(Theme.statusBarText)\(left)\(spaces)\(right)"
     }
     
     private func renderHelpBar(width: Int) -> String {
@@ -2322,7 +2458,21 @@ class EditorApp {
     }
 
     private func renderHintBar(width: Int) -> String {
-        return "\(Theme.accent)ctrl+p \(Theme.textMuted)commands   \(Theme.accent)ctrl+/ \(Theme.textMuted)help\(Theme.reset)"
+        // Left: the AI provider (and model, if set). Right: command/help shortcuts,
+        // right-aligned with one column of padding from the edge.
+        var providerText = state.llmProvider.displayName
+        if state.llmProvider == .openRouter, let model = state.openRouterModel, !model.isEmpty {
+            providerText += " · \(model)"
+        }
+        let left = "\(Theme.textMuted)\(providerText)\(Theme.reset)"
+        let leftVisible = providerText.displayWidth
+
+        let rightPlain = "ctrl+p commands   ctrl+/ help"
+        let right = "\(Theme.accent)ctrl+p \(Theme.textMuted)commands   \(Theme.accent)ctrl+/ \(Theme.textMuted)help\(Theme.reset)"
+        let rightVisible = rightPlain.displayWidth
+
+        let gap = max(1, width - leftVisible - rightVisible - 2)
+        return " \(left)\(String(repeating: " ", count: gap))\(right) "
     }
 
     private func renderReviewHintBar(width: Int) -> String {

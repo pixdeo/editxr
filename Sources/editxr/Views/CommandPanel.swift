@@ -232,8 +232,8 @@ final class CommandPanel {
 
     // MARK: - Rendering
 
-    // Box geometry: "▌" bar (1) + left pad (2) + content + right pad (2).
-    private let barWidth = 1
+    // Box geometry: "│" border (1) + left pad (2) + content + right pad (2) + "│" border (1).
+    private let borderWidth = 1
     private let padX = 2
 
     /// Returns the box positioned on screen. `lines` are the box only (visible
@@ -244,43 +244,51 @@ final class CommandPanel {
 
         let boxWidth = min(60, max(40, width - 10))
         let left = max(0, (width - boxWidth) / 2)
-        let contentWidth = boxWidth - barWidth - padX * 2
+        let contentWidth = boxWidth - borderWidth * 2 - padX * 2
 
-        let (top, lines): (Int, [String])
+        let content: [String]
         switch state {
         case .browsing:
-            (top, lines) = renderBrowsing(height: height, boxWidth: boxWidth, contentWidth: contentWidth)
+            content = renderBrowsing(boxWidth: boxWidth, contentWidth: contentWidth, height: height)
         case .input(let field):
-            (top, lines) = renderInput(field, height: height, boxWidth: boxWidth, contentWidth: contentWidth)
+            content = renderInput(field, boxWidth: boxWidth, contentWidth: contentWidth)
         case .oauth(let url, let message):
-            (top, lines) = renderSimple(["Sign in to OpenAI", "", message, url, "", "Esc cancel"],
-                                        height: height, boxWidth: boxWidth, contentWidth: contentWidth)
+            content = renderSimple(["Sign in to OpenAI", "", message, url, "", "Esc cancel"],
+                                   boxWidth: boxWidth, contentWidth: contentWidth)
         case .error(let msg):
-            (top, lines) = renderSimple(["Error", "", msg, "", "Esc close"],
-                                        height: height, boxWidth: boxWidth, contentWidth: contentWidth)
+            content = renderSimple(["Error", "", msg, "", "Esc close"],
+                                   boxWidth: boxWidth, contentWidth: contentWidth)
         case .hidden:
             return nil
         }
+
+        // Wrap the content rows in a rounded border.
+        let lines = [borderRow(boxWidth: boxWidth, top: true)] + content + [borderRow(boxWidth: boxWidth, top: false)]
+        let top = max(0, (height - lines.count) / 2)
         return (top: top, left: left, width: boxWidth, lines: lines)
     }
 
-    private func renderBrowsing(height: Int, boxWidth: Int, contentWidth: Int) -> (Int, [String]) {
+    private func borderRow(boxWidth: Int, top: Bool) -> String {
+        let lead = top ? "╭" : "╰"
+        let tail = top ? "╮" : "╯"
+        let mid = String(repeating: "─", count: max(0, boxWidth - 2))
+        return "\(Theme.accent)\(lead)\(mid)\(tail)\(Theme.reset)"
+    }
+
+    private func renderBrowsing(boxWidth: Int, contentWidth: Int, height: Int) -> [String] {
         let cmds = filteredCommands
         let nested = !stack.isEmpty
 
         let header = 4   // top pad + title + search + blank
         let footer = 3   // blank + hint + bottom pad
-        let maxRows = max(1, min(cmds.isEmpty ? 1 : cmds.count, height - 4 - header - footer))
+        // Leave room for the two border rows plus a small screen margin.
+        let maxRows = max(1, min(cmds.isEmpty ? 1 : cmds.count, height - 6 - header - footer))
 
         var start = 0
         if selectedIndex >= maxRows {
             start = selectedIndex - maxRows + 1
         }
         let end = min(cmds.count, start + maxRows)
-        let shownRows = cmds.isEmpty ? 1 : (end - start)
-
-        let boxHeight = header + shownRows + footer
-        let top = max(0, (height - boxHeight) / 2)
 
         let hint = nested ? "↑↓ move   ↵ select   esc back" : "↑↓ move   ↵ run   esc close"
 
@@ -301,10 +309,10 @@ final class CommandPanel {
         lines.append(blankRow(boxWidth: boxWidth))
         lines.append(textRow(hint, color: Theme.textMuted, cursor: false, contentWidth: contentWidth, boxWidth: boxWidth))
         lines.append(blankRow(boxWidth: boxWidth))                                              // bottom pad
-        return (top, lines)
+        return lines
     }
 
-    private func renderInput(_ field: InputField, height: Int, boxWidth: Int, contentWidth: Int) -> (Int, [String]) {
+    private func renderInput(_ field: InputField, boxWidth: Int, contentWidth: Int) -> [String] {
         let shown = field.isSecret ? String(repeating: "•", count: field.value.count) : field.value
         var lines: [String] = []
         lines.append(blankRow(boxWidth: boxWidth))
@@ -314,27 +322,25 @@ final class CommandPanel {
         lines.append(blankRow(boxWidth: boxWidth))
         lines.append(textRow("↵ save   esc cancel", color: Theme.textMuted, cursor: false, contentWidth: contentWidth, boxWidth: boxWidth))
         lines.append(blankRow(boxWidth: boxWidth))
-        let top = max(0, (height - lines.count) / 2)
-        return (top, lines)
+        return lines
     }
 
-    private func renderSimple(_ content: [String], height: Int, boxWidth: Int, contentWidth: Int) -> (Int, [String]) {
+    private func renderSimple(_ content: [String], boxWidth: Int, contentWidth: Int) -> [String] {
         var lines = [blankRow(boxWidth: boxWidth)]
         lines += content.map { textRow($0, color: Theme.statusBarText, cursor: false, contentWidth: contentWidth, boxWidth: boxWidth) }
         lines.append(blankRow(boxWidth: boxWidth))
-        let top = max(0, (height - lines.count) / 2)
-        return (top, lines)
+        return lines
     }
 
     // MARK: - Row builders (each returns a box-only line of visible width `boxWidth`)
 
     private func frame(_ innerStyled: String, innerVisible: Int, bg: String, boxWidth: Int) -> String {
-        let contentWidth = boxWidth - barWidth - padX * 2
+        let contentWidth = boxWidth - borderWidth * 2 - padX * 2
         let trailing = max(0, contentWidth - innerVisible)
         let padded = innerStyled + String(repeating: " ", count: trailing)
-        let lpad = String(repeating: " ", count: padX)
-        let rpad = String(repeating: " ", count: padX)
-        return "\(Theme.accent)▌\(bg)\(lpad)\(padded)\(rpad)\(Theme.reset)"
+        let pad = String(repeating: " ", count: padX)
+        // │ + bg(pad + content + pad) + │  — borders in the accent colour.
+        return "\(Theme.accent)│\(bg)\(pad)\(padded)\(pad)\(Theme.accent)│\(Theme.reset)"
     }
 
     private func blankRow(boxWidth: Int) -> String {

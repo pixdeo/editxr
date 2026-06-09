@@ -6,6 +6,7 @@ struct Config: Codable {
     var renderMarkdown: Bool = true
     // Optional so configs written before this field still decode.
     var showLineNumbers: Bool? = false
+    var statusBarBig: Bool? = true
     var scrollPastEnd: Bool? = true
     var fullTable: Bool? = true
     var leftMargin: Int? = 1

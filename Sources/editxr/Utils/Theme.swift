@@ -34,7 +34,7 @@ enum ColorMode {
         tcsetattr(tty.fileDescriptor, TCSANOW, &newTermios)
         defer { tcsetattr(tty.fileDescriptor, TCSANOW, &oldTermios) }
 
-        let query = "\u{1B}]11;?\u{1B}\\"
+        let query = "\u{1B}]11;?\u{07}"
         ttyOut.write(query.data(using: .utf8)!)
 
         var response = ""
@@ -76,9 +76,35 @@ enum ColorMode {
     }
 }
 
-// SGR helpers: truecolor foreground / background escape sequences.
-private func fg(_ r: Int, _ g: Int, _ b: Int) -> String { "\u{1B}[38;2;\(r);\(g);\(b)m" }
-private func bg(_ r: Int, _ g: Int, _ b: Int) -> String { "\u{1B}[48;2;\(r);\(g);\(b)m" }
+/// Whether the terminal handles 24-bit colour. iTerm2/Ghostty/WezTerm/etc set
+/// COLORTERM=truecolor; Terminal.app does not, so it falls back to 256-colour.
+let terminalTrueColor: Bool = {
+    let env = ProcessInfo.processInfo.environment
+    if let ct = env["COLORTERM"], ct.contains("truecolor") || ct.contains("24bit") { return true }
+    if env["GHOSTTY_RESOURCES_DIR"] != nil || env["WEZTERM_EXECUTABLE"] != nil { return true }
+    if let tp = env["TERM_PROGRAM"],
+       ["iTerm.app", "ghostty", "WezTerm", "vscode", "Hyper"].contains(tp) { return true }
+    return false
+}()
+
+/// Nearest xterm-256 index for an RGB colour (grayscale ramp + 6×6×6 cube).
+private func ansi256(_ r: Int, _ g: Int, _ b: Int) -> Int {
+    if abs(r - g) < 12 && abs(g - b) < 12 && abs(r - b) < 12 {
+        if r < 8 { return 16 }
+        if r > 248 { return 231 }
+        return 232 + Int((Double(r - 8) / 247.0 * 24.0).rounded())
+    }
+    func c(_ v: Int) -> Int { Int((Double(v) / 255.0 * 5.0).rounded()) }
+    return 16 + 36 * c(r) + 6 * c(g) + c(b)
+}
+
+// SGR helpers: 24-bit colour where supported, else a 256-colour approximation.
+private func fg(_ r: Int, _ g: Int, _ b: Int) -> String {
+    terminalTrueColor ? "\u{1B}[38;2;\(r);\(g);\(b)m" : "\u{1B}[38;5;\(ansi256(r, g, b))m"
+}
+private func bg(_ r: Int, _ g: Int, _ b: Int) -> String {
+    terminalTrueColor ? "\u{1B}[48;2;\(r);\(g);\(b)m" : "\u{1B}[48;5;\(ansi256(r, g, b))m"
+}
 
 /// Selectable colour schemes. Kept deliberately small and minimalist —
 /// each one is mode-aware (light/dark) rather than a fixed set of colours.
@@ -167,7 +193,7 @@ struct ThemePalette {
 
         case (.clay, .dark):
             return ThemePalette(
-                textPrimary: fg(235, 229, 219), textSecondary: fg(168, 160, 148),
+                textPrimary: fg(235, 229, 219), textSecondary: fg(138, 131, 121),
                 textMuted: fg(122, 115, 105), accent: fg(204, 120, 92),
                 statusBarBg: bg(45, 42, 38), statusBarText: fg(168, 160, 148),
                 shadowStyle: bg(0, 0, 0) + fg(70, 66, 60),
@@ -175,7 +201,7 @@ struct ThemePalette {
                 gutter: fg(110, 104, 95), string: fg(150, 140, 120))
         case (.clay, .light):
             return ThemePalette(
-                textPrimary: fg(41, 37, 33), textSecondary: fg(105, 98, 88),
+                textPrimary: fg(41, 37, 33), textSecondary: fg(130, 123, 112),
                 textMuted: fg(150, 142, 130), accent: fg(181, 95, 66),
                 statusBarBg: bg(240, 236, 228), statusBarText: fg(105, 98, 88),
                 shadowStyle: bg(205, 200, 190) + fg(150, 142, 130),
@@ -440,11 +466,13 @@ struct ThemePalette {
     }
 
     /// OSC 10 + OSC 11 sequence: set the terminal foreground and background to
-    /// this theme's text/surface colours.
+    /// this theme's text/surface colours. BEL-terminated (widely supported); only
+    /// emitted on true-colour terminals. Empty string when unsupported.
     static func backgroundOSC(_ name: ThemeName, _ mode: ColorMode) -> String {
+        guard terminalTrueColor else { return "" }
         let (br, bg, bb) = backgroundRGB(name, mode)
         let (fr, fg, fb) = foregroundRGB(name, mode)
-        return String(format: "\u{1B}]10;rgb:%02x/%02x/%02x\u{1B}\\\u{1B}]11;rgb:%02x/%02x/%02x\u{1B}\\",
+        return String(format: "\u{1B}]10;rgb:%02x/%02x/%02x\u{07}\u{1B}]11;rgb:%02x/%02x/%02x\u{07}",
                       fr, fg, fb, br, bg, bb)
     }
 }
