@@ -543,6 +543,19 @@ struct Theme {
         return bg(c(r), c(g), c(b))
     }
 
+    /// Foreground colour faded toward the editor background. `t` in [0, 1]:
+    /// 0 → full text colour, 1 → background (effectively invisible). Used by
+    /// focus mode to dim text by distance from the cursor.
+    static func fadedFg(_ t: Double) -> String {
+        let c = max(0.0, min(1.0, t))
+        let (fr, fgc, fb) = ThemePalette.foregroundRGB(name, mode)
+        let (br, bgc, bb) = ThemePalette.backgroundRGB(name, mode)
+        func mix(_ a: Int, _ b: Int) -> Int {
+            Int((Double(a) + (Double(b) - Double(a)) * c).rounded())
+        }
+        return fg(mix(fr, br), mix(fgc, bgc), mix(fb, bb))
+    }
+
     static let reset = "\u{1B}[0m"
     static let bold = "\u{1B}[1m"
     static let italic = "\u{1B}[3m"

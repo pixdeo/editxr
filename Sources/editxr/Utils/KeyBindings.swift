@@ -19,6 +19,7 @@ enum Key {
     static let backspace: Character = "\u{7f}"
     static let tab: Character = "\t"
 
+    static let ctrlB: Character = "\u{02}"
     static let ctrlL: Character = "\u{0C}"
     static let ctrlSpace: Character = "\u{00}"
     static let escape: Character = "\u{1B}"

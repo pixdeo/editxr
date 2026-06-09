@@ -5,6 +5,25 @@ enum ViewMode {
     case raw
 }
 
+/// Focus mode: dim everything but the area around the cursor, fading toward
+/// the background with distance. `line` fades whole lines by vertical
+/// distance; `word` adds a horizontal fade so only the word under the cursor
+/// stays fully lit. Not persisted — it always starts off.
+enum FocusMode {
+    case off
+    case line
+    case word
+
+    /// Short label for the command palette / status bar.
+    var label: String {
+        switch self {
+        case .off:  return "off"
+        case .line: return "line"
+        case .word: return "word"
+        }
+    }
+}
+
 struct DocumentSnapshot {
     let lines: [String]
     let cursorLine: Int
@@ -22,6 +41,7 @@ class EditorState {
     let filePath: String
     var document: Document
     var viewMode: ViewMode = .normal
+    var focusMode: FocusMode = .off
     var showStatusBar: Bool = true
     var showHelp: Bool = true
     var showLineNumbers: Bool = false
@@ -202,6 +222,15 @@ class EditorState {
     func toggleViewMode() {
         viewMode = viewMode == .normal ? .raw : .normal
         saveConfig()
+    }
+
+    /// Cycle off → line → word → off. Deliberately not persisted to config.
+    func cycleFocusMode() {
+        switch focusMode {
+        case .off:  focusMode = .line
+        case .line: focusMode = .word
+        case .word: focusMode = .off
+        }
     }
     
     func toggleStatusBar() {

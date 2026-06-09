@@ -112,6 +112,7 @@ class EditorApp {
             toggleCommand("Toggle raw view", "^R") { [weak self] in self?.state.toggleViewMode() },
             toggleCommand("Toggle word wrap", "^W") { [weak self] in self?.state.toggleWordWrap() },
             toggleCommand("Toggle line numbers", "^L") { [weak self] in self?.state.toggleLineNumbers() },
+            toggleCommand("Focus mode (^B)", state.focusMode.label) { [weak self] in self?.state.cycleFocusMode() },
             toggleCommand("Toggle help bar", "^/") { [weak self] in self?.state.toggleHelp() },
             toggleCommand("Toggle scroll past end", "") { [weak self] in self?.state.toggleScrollPastEnd() },
             toggleCommand("Toggle big status bar", state.statusBarBig ? "big" : "slim") { [weak self] in self?.state.toggleStatusBarBig() },
@@ -472,6 +473,9 @@ class EditorApp {
             case Key.ctrlL:
                 state.toggleLineNumbers()
                 needsRender = true
+            case Key.ctrlB:
+                state.cycleFocusMode()
+                needsRender = true
             case Key.ctrlV:
                 state.paste()
                 needsRender = true
@@ -756,6 +760,113 @@ class EditorApp {
         return String(repeating: " ", count: max(0, width))
     }
     
+    // MARK: - Focus mode
+
+    /// Fade radii: how far the gradient reaches before text hits the background.
+    private let focusVRadius = 7    // lines, vertically
+    private let focusHRadius = 22   // columns, horizontally (word mode)
+
+    /// Combined fade weight (0 = lit, 1 = background) from the cursor, as a
+    /// radial blend of vertical line distance and horizontal column distance.
+    private func focusT(lineDelta: Int, colDistance: Int) -> Double {
+        let dv = Double(abs(lineDelta)) / Double(focusVRadius)
+        let dh = Double(colDistance) / Double(focusHRadius)
+        return min(1.0, (dv * dv + dh * dh).squareRoot())
+    }
+
+    /// Apply the active focus mode to a finished rendered line. `rawText` is the
+    /// plain source text for this row (used by word mode); `baseColumn` is its
+    /// first column in the document line. Returns `styled` unchanged when focus
+    /// is off or while a selection / edit review is on screen.
+    private func applyFocus(_ styled: String, rawText: String, baseColumn: Int, lineIndex: Int) -> String {
+        guard state.focusMode != .off,
+              state.document.selectionRange == nil,
+              state.pendingEdit == nil else { return styled }
+
+        let cursorLine = state.document.cursorLine
+        switch state.focusMode {
+        case .off:
+            return styled
+        case .line:
+            if lineIndex == cursorLine { return styled }
+            return focusFlatten(styled, t: focusT(lineDelta: lineIndex - cursorLine, colDistance: 0))
+        case .word:
+            return focusWords(rawText, baseColumn: baseColumn,
+                              lineDelta: lineIndex - cursorLine,
+                              isCursorLine: lineIndex == cursorLine)
+        }
+    }
+
+    /// Keep a line's visible glyphs but drop all styling and repaint them in a
+    /// single faded foreground colour. Skips ANSI escape sequences the same way
+    /// `displayWidth` does.
+    private func focusFlatten(_ styled: String, t: Double) -> String {
+        var out = Theme.fadedFg(t)
+        var inEscape = false
+        for ch in styled {
+            if ch == "\u{1B}" {
+                inEscape = true
+            } else if inEscape {
+                if ch.isLetter { inEscape = false }
+            } else {
+                out.append(ch)
+            }
+        }
+        return out + Theme.reset
+    }
+
+    /// Per-word radial fade over plain text: each word is dimmed by its distance
+    /// from the cursor (vertical + horizontal). On the cursor line the glyph
+    /// under the cursor is drawn as an inverse block so the caret stays visible.
+    private func focusWords(_ text: String, baseColumn: Int, lineDelta: Int, isCursorLine: Bool) -> String {
+        let chars = Array(text)
+        let cursorCol = state.document.cursorColumn
+
+        // Fade weight per character, shared across each whole word so a word
+        // doesn't fade out within itself.
+        var ts = [Double](repeating: 1.0, count: chars.count)
+        var idx = 0
+        while idx < chars.count {
+            if chars[idx] == " " || chars[idx] == "\t" {
+                let col = baseColumn + idx
+                ts[idx] = focusT(lineDelta: lineDelta, colDistance: abs(col - cursorCol))
+                idx += 1
+                continue
+            }
+            let wStart = idx
+            while idx < chars.count && chars[idx] != " " && chars[idx] != "\t" { idx += 1 }
+            let startCol = baseColumn + wStart
+            let endCol = baseColumn + idx - 1
+            let dh = cursorCol < startCol ? startCol - cursorCol
+                   : (cursorCol > endCol ? cursorCol - endCol : 0)
+            let t = focusT(lineDelta: lineDelta, colDistance: dh)
+            for k in wStart..<idx { ts[k] = t }
+        }
+
+        // Emit, bucketing the fade into 0.05 steps so we only switch colour when
+        // it visibly changes instead of once per character.
+        var out = ""
+        var lastBucket = -1
+        for k in 0..<chars.count {
+            if isCursorLine && baseColumn + k == cursorCol {
+                out += "\(Theme.inverse)\(chars[k])\(Theme.reset)"
+                lastBucket = -1   // force a colour re-emit after the reset
+                continue
+            }
+            let bucket = Int((ts[k] * 20).rounded())
+            if bucket != lastBucket {
+                out += Theme.fadedFg(Double(bucket) / 20.0)
+                lastBucket = bucket
+            }
+            out.append(chars[k])
+        }
+        // Caret sitting at the end of the line.
+        if isCursorLine && cursorCol == baseColumn + chars.count {
+            out += "\(Theme.inverse) \(Theme.reset)"
+        }
+        return out + Theme.reset
+    }
+
     private func renderEditor(width: Int, height: Int) -> String {
         // Top bar (filename + optional markdown title) + status + hint bars.
         var reservedLines = 3
@@ -1112,6 +1223,7 @@ class EditorApp {
                 }
             }
             
+            renderedLine = applyFocus(renderedLine, rawText: line, baseColumn: 0, lineIndex: i)
             let gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
             let scrolled = applyHorizontalScroll(renderedLine, scrollX: state.scrollX, width: width)
             output.append(padToWidth(gutter + scrolled, width: gutterWidth + width))
@@ -1365,16 +1477,19 @@ class EditorApp {
                     width: width
                 )
                 
-                let renderedLine = renderSegment(
-                    segment: segment,
-                    mode: mode,
-                    localCursor: localCursor,
-                    lineIndex: i,
-                    segmentStart: segmentStart,
-                    selection: selection,
-                    doc: doc,
-                    spans: spans,
-                    width: width
+                let renderedLine = applyFocus(
+                    renderSegment(
+                        segment: segment,
+                        mode: mode,
+                        localCursor: localCursor,
+                        lineIndex: i,
+                        segmentStart: segmentStart,
+                        selection: selection,
+                        doc: doc,
+                        spans: spans,
+                        width: width
+                    ),
+                    rawText: segment, baseColumn: segmentStart, lineIndex: i
                 )
 
                 let gutter = segmentIndex == 0
@@ -1949,8 +2064,9 @@ class EditorApp {
                 rendered = applyTokens(to: line, tokens: tokens)
             }
 
+            let focused = applyFocus(rendered, rawText: line, baseColumn: 0, lineIndex: i)
             let gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
-            let scrolled = applyHorizontalScroll(rendered, scrollX: state.scrollX, width: width)
+            let scrolled = applyHorizontalScroll(focused, scrollX: state.scrollX, width: width)
             output.append(padToWidth(gutter + scrolled, width: gutterWidth + width))
         }
         return output
@@ -2005,15 +2121,16 @@ class EditorApp {
             } else {
                 renderedLine = line
             }
-            
+
+            renderedLine = applyFocus(renderedLine, rawText: line, baseColumn: 0, lineIndex: i)
             let gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
             let scrolled = applyHorizontalScroll(renderedLine, scrollX: state.scrollX, width: width)
             output.append(padToWidth(gutter + scrolled, width: gutterWidth + width))
         }
-        
+
         return output
     }
-    
+
     private func renderRawModeWrapped(width: Int, height: Int, gutterWidth: Int) -> [String] {
         var output: [String] = []
         let doc = state.document
@@ -2046,7 +2163,9 @@ class EditorApp {
                     } else {
                         renderedLine = segment
                     }
-                    
+
+                    renderedLine = applyFocus(renderedLine, rawText: segment, baseColumn: segmentStart, lineIndex: i)
+
                     let gutter: String
                     if segmentIndex == 0 {
                         gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
@@ -2205,9 +2324,11 @@ class EditorApp {
                 currentEscape.append(char)
                 if char.isLetter {
                     inEscape = false
-                    if skipped >= scrollX {
-                        result.append(currentEscape)
-                    }
+                    // Keep every escape, even those in the skipped-left region:
+                    // they take no columns and carry the colour/style state that
+                    // the first visible character needs. Dropping them made focus
+                    // mode's faded colours vanish under horizontal scroll.
+                    result.append(currentEscape)
                     currentEscape = ""
                 }
             } else {
@@ -2422,6 +2543,11 @@ class EditorApp {
             append("Saved", visible: 5)
         } else if state.isDirty {
             append("\(Theme.accent)◉\(Theme.statusBarText)", visible: 1)
+        }
+        switch state.focusMode {
+        case .off:  break
+        case .line: append("[FOCUS]", visible: 7)
+        case .word: append("[FOCUS·W]", visible: 9)
         }
         // While finding, the query lives inline on the status bar.
         if state.searchActive {
