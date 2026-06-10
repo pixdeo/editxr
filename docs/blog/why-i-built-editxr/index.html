@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Why I built editxr — editxr</title>
+<meta name="description" content="The terminal became my home again. Why I built a WYSIWYG Markdown editor for the terminal — rendered as you type, with AI edits you review as inline diffs.">
+<link rel="icon" href="/editxr.png">
+<link rel="canonical" href="https://editxr.org/blog/why-i-built-editxr/">
+
+<!-- Social cards -->
+<meta property="og:type" content="article">
+<meta property="og:title" content="Why I built editxr">
+<meta property="og:description" content="The terminal became my home again. Why I built a WYSIWYG Markdown editor for the terminal — rendered as you type, with AI edits you review as inline diffs.">
+<meta property="og:url" content="https://editxr.org/blog/why-i-built-editxr/">
+<meta property="og:image" content="https://editxr.org/editxr.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Why I built editxr">
+<meta name="twitter:description" content="The terminal became my home again. Why I built a WYSIWYG Markdown editor for the terminal.">
+<meta name="twitter:image" content="https://editxr.org/editxr.png">
+
+<!-- Structured data -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Why I built editxr",
+  "description": "Why I built a WYSIWYG Markdown editor for the terminal — rendered as you type, with AI edits you review as inline diffs.",
+  "datePublished": "2026-06-10",
+  "author": { "@type": "Person", "name": "Martín Romañuk" },
+  "publisher": { "@type": "Organization", "name": "Pixdeo LTD" },
+  "mainEntityOfPage": "https://editxr.org/blog/why-i-built-editxr/",
+  "url": "https://editxr.org/blog/why-i-built-editxr/",
+  "image": "https://editxr.org/editxr.png",
+  "about": { "@type": "SoftwareApplication", "name": "editxr", "url": "https://editxr.org" }
+}
+</script>
+
+<style>
+  :root {
+    --bg: #1c1a18;
+    --surface: #262320;
+    --border: #3a352f;
+    --text: #ebe5db;
+    --muted: #8a8379;
+    --accent: #cc785c;
+    --accent-soft: rgba(204, 120, 92, 0.14);
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--mono); line-height: 1.7; -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 1.25rem; }
+
+  /* Top bar */
+  .nav { border-bottom: 1px solid var(--border); }
+  .nav .wrap { display: flex; align-items: center; justify-content: space-between; padding: 1rem 1.25rem; }
+  .nav .brand { display: flex; align-items: center; gap: .5rem; color: var(--text); font-weight: 600; }
+  .nav .brand img { width: 22px; height: 22px; }
+  .nav .links a { color: var(--muted); margin-left: 1.1rem; font-size: .9rem; }
+  .nav .links a:hover { color: var(--accent); }
+
+  /* Article */
+  article { padding: 3.5rem 0 1rem; }
+  .eyebrow { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; margin: 0 0 .75rem; }
+  article h1 { font-size: 2rem; line-height: 1.25; margin: 0 0 .6rem; }
+  .byline { color: var(--muted); font-size: .85rem; margin: 0 0 2.25rem; }
+  .lead { font-size: 1.1rem; color: var(--text); }
+  article p { margin: 0 0 1.25rem; }
+  article code { color: var(--accent); background: var(--accent-soft); padding: .1em .4em; border-radius: 4px; font-size: .9em; }
+
+  /* CTA */
+  .cta { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem 1.4rem; margin: 2.5rem 0 1rem; }
+  .cta p { margin: 0 0 1rem; color: var(--muted); }
+  .cta pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: .7rem .9rem; overflow-x: auto; color: var(--text); font-size: .88rem; margin: 0 0 1rem; }
+  .cta .btn { display: inline-block; padding: .5rem 1rem; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); font-size: .9rem; }
+  .cta .btn:hover { text-decoration: none; }
+
+  footer { border-top: 1px solid var(--border); padding: 2.5rem 0 3rem; text-align: center; color: var(--muted); font-size: .85rem; margin-top: 2rem; }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/editxr.png" alt="">editxr</a>
+    <div class="links">
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/pixdeo/editxr">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<article>
+  <div class="wrap">
+    <p class="eyebrow">Blog</p>
+    <h1>Why I built editxr</h1>
+    <p class="byline">By Martín Romañuk · June 10, 2026</p>
+
+    <p class="lead">The terminal became my home again. I spent years living in it — back in
+    the Solaris and Linux days — and lately, with coding agents like Claude Code, OpenCode
+    and Codex, I'm in it more than ever. I think that's a good thing, something I got back.</p>
+
+    <p>Markdown is a great format for writing blogs and documentation, but I was never
+    comfortable writing it in vi or nvim, and I didn't want to reach for a GUI either. You can
+    always edit plain text, or stare at unrendered <code>**Markdown**</code> tags — but who
+    actually wants that?</p>
+
+    <p>I've always tried to follow the Unix philosophy: a tool that does one thing well. So
+    editxr does one thing — let you edit Markdown, rendered, without leaving the terminal. It
+    renders as you type, the line under your cursor stays raw so you're editing the real file,
+    and you can hand a section to an LLM and review its change as an inline diff before it
+    lands.</p>
+
+    <p>There's a tension I'm aware of: "do one thing well" versus where this could go. You
+    could keep building it out — editing HTML, who knows what else. For now I'm keeping it
+    focused.</p>
+
+    <p>This is my first open source project — and I've been around since before the internet,
+    so it was about time I gave something back. It belongs to the community now.</p>
+
+    <div class="cta">
+      <p>Try it — and a star on GitHub helps if it's useful to you.</p>
+      <pre>brew install pixdeo/tap/editxr</pre>
+      <a class="btn" href="https://github.com/pixdeo/editxr">View on GitHub</a>
+    </div>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap">
+    <a href="/">Home</a> ·
+    <a href="/blog/">Blog</a> ·
+    <a href="https://github.com/pixdeo/editxr">GitHub</a> ·
+    <a href="https://github.com/pixdeo/editxr/blob/main/LICENSE">MIT</a> ·
+    © 2026 Pixdeo LTD
+  </div>
+</footer>
+
+</body>
+</html>

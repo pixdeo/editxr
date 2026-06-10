@@ -1,0 +1,103 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Blog — editxr</title>
+<meta name="description" content="Notes from building editxr, a WYSIWYG Markdown editor for the terminal.">
+<link rel="icon" href="/editxr.png">
+<link rel="canonical" href="https://editxr.org/blog/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="editxr blog">
+<meta property="og:description" content="Notes from building editxr, a WYSIWYG Markdown editor for the terminal.">
+<meta property="og:url" content="https://editxr.org/blog/">
+<meta property="og:image" content="https://editxr.org/editxr.png">
+
+<style>
+  :root {
+    --bg: #1c1a18;
+    --surface: #262320;
+    --border: #3a352f;
+    --text: #ebe5db;
+    --muted: #8a8379;
+    --accent: #cc785c;
+    --accent-soft: rgba(204, 120, 92, 0.14);
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--mono); line-height: 1.7; -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 1.25rem; }
+
+  .nav { border-bottom: 1px solid var(--border); }
+  .nav .wrap { display: flex; align-items: center; justify-content: space-between; padding: 1rem 1.25rem; }
+  .nav .brand { display: flex; align-items: center; gap: .5rem; color: var(--text); font-weight: 600; }
+  .nav .brand img { width: 22px; height: 22px; }
+  .nav .links a { color: var(--muted); margin-left: 1.1rem; font-size: .9rem; }
+  .nav .links a:hover { color: var(--accent); }
+
+  header.page { padding: 3.5rem 0 1.5rem; }
+  header.page h1 { font-size: 1.8rem; margin: 0 0 .4rem; }
+  header.page p { color: var(--muted); margin: 0; }
+
+  .posts { list-style: none; padding: 0; margin: 1.5rem 0 0; display: grid; gap: 1rem; }
+  .posts li {
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 10px; padding: 1.1rem 1.25rem;
+  }
+  .posts a.title { color: var(--text); font-size: 1.1rem; font-weight: 600; }
+  .posts a.title:hover { color: var(--accent); text-decoration: none; }
+  .posts .meta { color: var(--muted); font-size: .8rem; margin: .25rem 0 .5rem; }
+  .posts .excerpt { color: var(--muted); font-size: .92rem; margin: 0; }
+
+  footer { border-top: 1px solid var(--border); padding: 2.5rem 0 3rem; text-align: center; color: var(--muted); font-size: .85rem; margin-top: 3rem; }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--accent); }
+</style>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/editxr.png" alt="">editxr</a>
+    <div class="links">
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/pixdeo/editxr">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<header class="page">
+  <div class="wrap">
+    <h1>Blog</h1>
+    <p>Notes from building editxr.</p>
+  </div>
+</header>
+
+<div class="wrap">
+  <ul class="posts">
+    <li>
+      <a class="title" href="/blog/why-i-built-editxr/">Why I built editxr</a>
+      <p class="meta">June 10, 2026</p>
+      <p class="excerpt">The terminal became my home again — so I built a WYSIWYG Markdown
+      editor that renders as you type and edits sections with reviewable AI diffs, without
+      ever leaving the shell.</p>
+    </li>
+  </ul>
+</div>
+
+<footer>
+  <div class="wrap">
+    <a href="/">Home</a> ·
+    <a href="https://github.com/pixdeo/editxr">GitHub</a> ·
+    <a href="https://github.com/pixdeo/editxr/blob/main/LICENSE">MIT</a> ·
+    © 2026 Pixdeo LTD
+  </div>
+</footer>
+
+</body>
+</html>

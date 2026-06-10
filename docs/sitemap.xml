@@ -5,6 +5,14 @@
     <changefreq>weekly</changefreq>
   </url>
   <url>
+    <loc>https://editxr.org/blog/</loc>
+    <changefreq>weekly</changefreq>
+  </url>
+  <url>
+    <loc>https://editxr.org/blog/why-i-built-editxr/</loc>
+    <lastmod>2026-06-10</lastmod>
+  </url>
+  <url>
     <loc>https://editxr.org/llms.txt</loc>
     <changefreq>weekly</changefreq>
   </url>
