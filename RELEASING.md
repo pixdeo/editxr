@@ -18,9 +18,14 @@ relies on.
    Create the GitHub release and upload that zip
    (`gh release create vX.Y.Z dist/editxr-vX.Y.Z-macos-universal.zip ...`).
 3. **Linux (CI):** `git push origin vX.Y.Z`. The `release` workflow builds the
-   two static tarballs and attaches them to the same release. (You can also run
-   it from the Actions tab via `workflow_dispatch`, passing the tag.)
-4. **Homebrew tap:** bump the formula in `pixdeo/homebrew-tap` with the new
+   two static tarballs and attaches them to a **draft** release for the tag. (You
+   can also run it from the Actions tab via `workflow_dispatch`, passing the tag.)
+4. **Publish:** upload the macOS zip to that draft release
+   (`gh release upload vX.Y.Z dist/editxr-vX.Y.Z-macos-universal.zip`) and
+   publish it (`gh release edit vX.Y.Z --draft=false`). The release is kept a
+   draft until the macOS zip is present so it never becomes the "latest" that
+   `install.sh` reads with the Linux binaries only.
+5. **Homebrew tap:** bump the formula in `pixdeo/homebrew-tap` with the new
    version and the macOS zip's sha256. This is **not** automated — do it by hand.
 
 ## Caveats to remember

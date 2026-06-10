@@ -54,9 +54,12 @@ jobs:
           name: editxr-linux-${{ steps.ver.outputs.version }}
           path: dist/*.tar.gz
 
-      - name: Attach to release
+      # Created as a draft so it doesn't become "latest" (which install.sh reads)
+      # until the macOS universal zip is added and the release is published.
+      - name: Attach to draft release
         if: startsWith(github.ref, 'refs/tags/')
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.ver.outputs.version }}
+          draft: true
           files: dist/*.tar.gz
