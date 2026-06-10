@@ -180,6 +180,7 @@ class EditorApp {
             toggleCommand("Toggle help bar", "^/") { [weak self] in self?.state.toggleHelp() },
             toggleCommand("Toggle scroll past end", "") { [weak self] in self?.state.toggleScrollPastEnd() },
             toggleCommand("Toggle big status bar", state.statusBarBig ? "big" : "slim") { [weak self] in self?.state.toggleStatusBarBig() },
+            toggleCommand("Toggle contextual hints", state.contextHelp ? "on" : "off") { [weak self] in self?.state.toggleContextHelp() },
             toggleCommand("Toggle full table borders", "") { [weak self] in self?.state.toggleFullTable() },
             PaletteCommand(title: "Set left margin", shortcut: "\(state.leftMargin)") { [weak self] in
                 guard let self = self else { return }
@@ -2637,6 +2638,18 @@ class EditorApp {
     }
 
     /// The status content (dirty/find indicator on the left, word count and
+    /// A short hint for the line under the cursor, shown on the status bar when
+    /// contextual hints are on. Currently: how to cycle a task's state.
+    private func contextualHint() -> String? {
+        guard state.contextHelp else { return nil }
+        let doc = state.document
+        guard doc.cursorLine < doc.lines.count else { return nil }
+        if let list = parseListLine(doc.lines[doc.cursorLine]), case .todo = list.kind {
+            return "^T toggle task"
+        }
+        return nil
+    }
+
     /// cursor position on the right) laid out to `innerWidth` visible columns.
     /// Assumes the status-bar background is already active.
     private func statusInner(innerWidth: Int) -> String {
@@ -2674,6 +2687,10 @@ class EditorApp {
         case .off:  break
         case .line: append("[FOCUS]", visible: 7)
         case .word: append("[FOCUS·W]", visible: 9)
+        }
+        // Contextual hint for the line under the cursor (e.g. toggling a task).
+        if !state.searchActive, let hint = contextualHint() {
+            append("\(Theme.italic)\(Theme.textMuted)\(hint)\(Theme.reset)\(Theme.statusBarText)", visible: hint.displayWidth)
         }
         // While finding, the query lives inline on the status bar.
         if state.searchActive {

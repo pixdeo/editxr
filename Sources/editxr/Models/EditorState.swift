@@ -49,6 +49,8 @@ class EditorState {
     var wordWrap: Bool = true
     var scrollPastEnd: Bool = true
     var fullTable: Bool = true
+    /// Contextual status-bar hints (e.g. "^T toggle task" on a task line).
+    var contextHelp: Bool = true
     var leftMargin: Int = 1
     var themeName: ThemeName = .system
     var appearance: Appearance = .auto
@@ -97,6 +99,7 @@ class EditorState {
         self.wordWrap = config.wordWrap
         self.scrollPastEnd = config.scrollPastEnd ?? true
         self.fullTable = config.fullTable ?? true
+        self.contextHelp = config.contextHelp ?? true
         self.leftMargin = max(0, min(8, config.leftMargin ?? 1))
         self.scrollMargin = max(0, min(20, config.scrollOff ?? 4))
         // Clay is the default on first run; a saved choice still wins.
@@ -268,6 +271,11 @@ class EditorState {
         saveConfig()
     }
 
+    func toggleContextHelp() {
+        contextHelp.toggle()
+        saveConfig()
+    }
+
     func setLeftMargin(_ value: Int) {
         leftMargin = max(0, min(8, value))
         saveConfig()
@@ -340,6 +348,7 @@ class EditorState {
         config.statusBarBig = statusBarBig
         config.scrollPastEnd = scrollPastEnd
         config.fullTable = fullTable
+        config.contextHelp = contextHelp
         config.leftMargin = leftMargin
         config.scrollOff = scrollMargin
         config.theme = themeName.rawValue

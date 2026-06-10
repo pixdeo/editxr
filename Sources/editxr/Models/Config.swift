@@ -9,6 +9,7 @@ struct Config: Codable {
     var statusBarBig: Bool? = true
     var scrollPastEnd: Bool? = true
     var fullTable: Bool? = true
+    var contextHelp: Bool? = true
     var leftMargin: Int? = 1
     var scrollOff: Int? = 4
     // Stored as the raw string so renaming/removing a theme can't make the
