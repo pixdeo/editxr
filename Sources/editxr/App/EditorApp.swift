@@ -72,6 +72,13 @@ class EditorApp {
     private var splashTimer: DispatchSourceTimer?
     private var splashA = 0.0
     private var splashB = 0.0
+    /// Transient status-bar toast (e.g. "copied 12 chars") that fades out.
+    private var toastText: String?
+    private var toastFrame = 0
+    private var toastTimer: DispatchSourceTimer?
+    /// Frames at full strength, then frames spent fading to invisible (~0.05s each).
+    private let toastHoldFrames = 16
+    private let toastFadeFrames = 18
 
     init(state: EditorState) {
         self.state = state
@@ -196,18 +203,24 @@ class EditorApp {
     /// marker follows.
     private func themeMenuCommands() -> [PaletteCommand] {
         var cmds: [PaletteCommand] = []
+
+        cmds.append(.header("Theme"))
         for theme in ThemeName.allCases {
             let active = state.themeName == theme
             cmds.append(PaletteCommand(title: theme.displayName, shortcut: active ? "current" : "", keepsOpen: true) { [weak self] in
                 self?.state.setTheme(theme)
             })
         }
+
+        cmds.append(.spacer)
+        cmds.append(.header("Appearance"))
         for appearance in Appearance.allCases {
             let active = state.appearance == appearance
-            cmds.append(PaletteCommand(title: "Appearance: \(appearance.displayName)", shortcut: active ? "current" : "", keepsOpen: true) { [weak self] in
+            cmds.append(PaletteCommand(title: appearance.displayName, shortcut: active ? "current" : "", keepsOpen: true) { [weak self] in
                 self?.state.setAppearance(appearance)
             })
         }
+
         return cmds
     }
 
@@ -311,6 +324,60 @@ class EditorApp {
         splashTimer = nil
     }
 
+    // MARK: - Status-bar toast
+
+    /// Show a transient message on the status bar that holds briefly then fades.
+    private func showToast(_ text: String) {
+        toastText = text
+        toastFrame = 0
+        toastTimer?.cancel()
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 0.05, repeating: 0.05)
+        timer.setEventHandler { [weak self] in
+            guard let self = self else { return }
+            self.toastFrame += 1
+            if self.toastFrame >= self.toastHoldFrames + self.toastFadeFrames {
+                self.toastText = nil
+                self.stopToastTimer()
+            }
+            self.render()
+        }
+        timer.resume()
+        toastTimer = timer
+        render()
+    }
+
+    private func stopToastTimer() {
+        toastTimer?.cancel()
+        toastTimer = nil
+    }
+
+    /// 1.0 while held, then ramps to 0.0 across the fade frames.
+    private var toastOpacity: Double {
+        guard toastFrame >= toastHoldFrames else { return 1.0 }
+        let f = Double(toastFrame - toastHoldFrames) / Double(toastFadeFrames)
+        return max(0.0, 1.0 - f)
+    }
+
+    private func copySelection() {
+        let n = state.copy()
+        if n > 0 { showToast(toastCount("Copied", n)) }
+    }
+
+    private func cutSelection() {
+        let n = state.cut()
+        if n > 0 { showToast(toastCount("Cut", n)) }
+    }
+
+    private func pasteClipboard() {
+        let n = state.paste()
+        if n > 0 { showToast(toastCount("Pasted", n)) } else { render() }
+    }
+
+    private func toastCount(_ verb: String, _ n: Int) -> String {
+        "\(verb) \(n) char\(n == 1 ? "" : "s")"
+    }
+
     private func hideCursor() {
         print("\u{1B}[?25l", terminator: "")
         fflush(stdout)
@@ -329,8 +396,10 @@ class EditorApp {
         // the trailing erase-to-EOL can drop that last cell (e.g. a box border).
         print("\u{1B}[?7l", terminator: "")
         print("\u{1B}[?2004h", terminator: "")
-        // Mouse reporting (button events + SGR coords) for trackpad/wheel scroll.
-        print("\u{1B}[?1000h\u{1B}[?1006h", terminator: "")
+        // Mouse reporting with SGR coords: ?1002 reports presses, releases, the
+        // wheel, and motion *while a button is held* — enough for wheel scroll
+        // and click-drag text selection (free motion stays unreported).
+        print("\u{1B}[?1002h\u{1B}[?1006h", terminator: "")
         fflush(stdout)
     }
 
@@ -339,7 +408,7 @@ class EditorApp {
         if terminalTrueColor {
             print("\u{1B}]110\u{07}\u{1B}]111\u{07}", terminator: "")
         }
-        print("\u{1B}[?1000l\u{1B}[?1006l", terminator: "")
+        print("\u{1B}[?1002l\u{1B}[?1006l", terminator: "")
         print("\u{1B}[?2004l", terminator: "")
         print("\u{1B}[?7h", terminator: "")   // restore autowrap
         print("\u{1B}[?25h", terminator: "")
@@ -373,16 +442,10 @@ class EditorApp {
             render()
         }
 
-        // Trackpad / mouse-wheel scroll (SGR mouse reporting). Consume all mouse
-        // events so clicks/drags don't leak into the editor as garbage.
-        if let delta = mouseScrollDelta(string) {
-            if delta != 0 {
-                let size = getTerminalSize()
-                state.scrollViewport(lines: delta * 3,
-                                     viewportHeight: size.height - 3,
-                                     viewportWidth: size.width - gutterWidth())
-                render()
-            }
+        // Mouse: wheel scrolls, click moves the cursor, click-drag selects.
+        // All mouse reports are consumed here so none leak into the editor.
+        if let events = parseMouseEvents(string) {
+            handleMouseEvents(events)
             return
         }
 
@@ -498,8 +561,11 @@ class EditorApp {
                 state.cycleFocusMode()
                 needsRender = true
             case Key.ctrlV:
-                state.paste()
-                needsRender = true
+                pasteClipboard()
+            case Key.ctrlC:
+                copySelection()
+            case Key.ctrlX:
+                cutSelection()
             case Key.ctrlU:
                 state.undo()
                 needsRender = true
@@ -534,11 +600,9 @@ class EditorApp {
                 if state.document.hasSelection {
                     switch char {
                     case "c":
-                        state.copy()
-                        needsRender = true
+                        copySelection()
                     case "x":
-                        state.cut()
-                        needsRender = true
+                        cutSelection()
                     default:
                         if isPrintable(char) {
                             state.handleCharacter(char)
@@ -1734,7 +1798,7 @@ class EditorApp {
         let marker: String
         switch list.kind {
         case .bullet:
-            marker = "▪"
+            marker = "•"
         case .todo(let state):
             switch state {
             case .unchecked: marker = "□"
@@ -1802,7 +1866,7 @@ class EditorApp {
     }
 
     private func makeQuoteRender(_ quote: QuoteLine) -> QuoteRender {
-        let prefix = quote.indent + "| "
+        let prefix = quote.indent + "┃ "
         let prefixStyle = Theme.textMuted
         let contentSpans = MarkdownLineParser.parse(quote.content)
         return QuoteRender(prefix: prefix, prefixStyle: prefixStyle, contentSpans: contentSpans)
@@ -2595,6 +2659,9 @@ class EditorApp {
             leftVisible += visible
         }
 
+        if let toast = toastText {
+            append("\(Theme.fadedStatusFg(toastOpacity))\(toast)\(Theme.statusBarText)", visible: toast.count)
+        }
         if state.viewMode == .raw {
             append("[RAW]", visible: 5)
         }
@@ -2678,18 +2745,54 @@ class EditorApp {
         return "\(Theme.diffAdd)y/⇥ \(Theme.textMuted)accept   \(Theme.diffDel)n/esc \(Theme.textMuted)reject   \(Theme.textMuted)AI edit review\(Theme.reset)"
     }
 
-    /// Parse SGR mouse reports (CSI < b ; x ; y M/m). Returns the net wheel
-    /// delta (+down / −up) if the input is mouse data, or nil if it isn't.
-    /// Non-wheel mouse events (clicks/drags) yield 0 (consumed, ignored).
-    private func mouseScrollDelta(_ string: String) -> Int? {
+    /// Parse SGR mouse reports (CSI < b ; x ; y M/m) from an input chunk, or nil
+    /// if it carries no mouse data. `release` is true for the `m`-terminated form.
+    private func parseMouseEvents(_ string: String) -> [(button: Int, x: Int, y: Int, release: Bool)]? {
         guard string.contains("\u{1B}[<") else { return nil }
-        var delta = 0
+        var events: [(button: Int, x: Int, y: Int, release: Bool)] = []
         for part in string.components(separatedBy: "\u{1B}[<").dropFirst() {
-            let button = Int(part.prefix { $0.isNumber }) ?? -1
-            if button == 64 { delta -= 1 }       // wheel up
-            else if button == 65 { delta += 1 }  // wheel down
+            guard let term = part.firstIndex(where: { $0 == "M" || $0 == "m" }) else { continue }
+            let nums = part[part.startIndex..<term].split(separator: ";")
+            guard nums.count == 3, let b = Int(nums[0]), let x = Int(nums[1]), let y = Int(nums[2]) else { continue }
+            events.append((button: b, x: x, y: y, release: part[term] == "m"))
         }
-        return delta
+        return events
+    }
+
+    /// Apply a batch of mouse reports: wheel → scroll, left press → place cursor
+    /// and anchor, left drag (motion bit) → extend the selection.
+    private func handleMouseEvents(_ events: [(button: Int, x: Int, y: Int, release: Bool)]) {
+        let size = getTerminalSize()
+        let gutter = gutterWidth()
+        let viewportWidth = size.width - gutter
+        let viewportHeight = size.height - 3
+        var wheel = 0
+        var changed = false
+
+        for e in events {
+            // Screen row 1 is the top bar; content begins on row 2. The gutter
+            // sits left of the content, so subtract both to get a viewport cell.
+            let row = max(0, e.y - 2)
+            let col = max(0, e.x - 1 - gutter)
+            switch e.button {
+            case 64: wheel -= 1                 // wheel up
+            case 65: wheel += 1                 // wheel down
+            case 0 where !e.release:            // left press
+                state.mousePress(row: row, col: col, viewportWidth: viewportWidth)
+                changed = true
+            case 32:                            // left drag (button 0 + motion)
+                state.mouseDrag(row: row, col: col, viewportWidth: viewportWidth)
+                changed = true
+            default:
+                break                           // release / other buttons: ignore
+            }
+        }
+
+        if wheel != 0 {
+            state.scrollViewport(lines: wheel * 3, viewportHeight: viewportHeight, viewportWidth: viewportWidth)
+            changed = true
+        }
+        if changed { render() }
     }
 
     private func extractBracketedPaste(_ input: String) -> String? {

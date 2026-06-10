@@ -556,6 +556,34 @@ struct Theme {
         return fg(mix(fr, br), mix(fgc, bgc), mix(fb, bb))
     }
 
+    /// Status-bar foreground faded from `accent` (t=1) toward the bar's
+    /// background (t=0), for transient toasts that fade out. Falls back to a
+    /// plain accent when the terminal isn't true-colour (can't interpolate).
+    static func fadedStatusFg(_ t: Double) -> String {
+        let c = max(0.0, min(1.0, t))
+        guard terminalTrueColor,
+              let (fr, fgc, fb) = parseTrueColorRGB(current.accent),
+              let (br, bgc, bb) = parseTrueColorRGB(current.statusBarBg) else {
+            return current.accent
+        }
+        func mix(_ a: Int, _ b: Int) -> Int {
+            Int((Double(b) + (Double(a) - Double(b)) * c).rounded())
+        }
+        return fg(mix(fr, br), mix(fgc, bgc), mix(fb, bb))
+    }
+
+    /// Pull the r/g/b out of a true-colour SGR token ("…;2;r;g;bm"); nil for the
+    /// 256-colour fallback form, which we can't smoothly interpolate.
+    private static func parseTrueColorRGB(_ s: String) -> (Int, Int, Int)? {
+        guard let mi = s.lastIndex(of: "m") else { return nil }
+        let comps = s[s.startIndex..<mi].split(separator: ";")
+        guard comps.count >= 5, comps[comps.count - 4] == "2",
+              let r = Int(comps[comps.count - 3]),
+              let g = Int(comps[comps.count - 2]),
+              let b = Int(comps[comps.count - 1]) else { return nil }
+        return (r, g, b)
+    }
+
     static let reset = "\u{1B}[0m"
     static let bold = "\u{1B}[1m"
     static let italic = "\u{1B}[3m"

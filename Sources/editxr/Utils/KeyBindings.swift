@@ -6,6 +6,8 @@ enum Key {
     static let ctrlR: Character = "\u{12}"
     static let ctrlQ: Character = "\u{11}"
     static let ctrlV: Character = "\u{16}"
+    static let ctrlC: Character = "\u{03}"
+    static let ctrlX: Character = "\u{18}"
     static let ctrlH: Character = "\u{08}"
     static let ctrlU: Character = "\u{15}"
     static let ctrlY: Character = "\u{19}"

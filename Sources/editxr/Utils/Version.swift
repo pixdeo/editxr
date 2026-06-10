@@ -22,6 +22,8 @@ enum AppInfo {
           Ctrl+Space  AI assist        Ctrl+E   export to HTML
           Ctrl+R    toggle raw view    Ctrl+W   toggle word wrap
           Ctrl+T    cycle task state   Ctrl+B   focus mode (line / word)
+          Ctrl+C    copy               Ctrl+X   cut
+          Ctrl+V    paste
         """
     }
 }

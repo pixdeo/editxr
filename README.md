@@ -18,8 +18,8 @@ test.md — My document
 
 This is a **test** with *markdown*.
 
-▪ Item 1
-▪ Item 2
+• Item 1
+• Item 2
 ```
 
 ## Demo
@@ -154,10 +154,12 @@ other LLM providers work as usual.
 | `Ctrl+E` | Export to HTML (and open it) |
 | `Ctrl+F` | Find (incremental) |
 | `Ctrl+G` | Find next match |
+| `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste (system clipboard) |
 | `Ctrl+U` / `Ctrl+Y` | Undo / Redo |
 | `Ctrl+H` | Delete word backward |
 | `Ctrl+/` | Toggle help bar |
 | Arrows / Shift+Arrows | Move / select |
+| Mouse | Wheel scrolls; click places the cursor; drag selects |
 | `Ctrl+←/→` | Move by word |
 | `Home` / `End` / `PgUp` / `PgDn` | Navigate |
 

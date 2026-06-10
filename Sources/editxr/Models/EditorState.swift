@@ -509,24 +509,37 @@ class EditorState {
         return "\(indent)- [ ] \(rest)"
     }
 
-    func copy() {
-        if let text = document.selectedText {
-            clipboard = text
-        }
+    /// Copy the selection to the clipboard; returns the number of characters
+    /// copied (0 if there's no selection).
+    @discardableResult
+    func copy() -> Int {
+        guard let text = document.selectedText else { return 0 }
+        clipboard = text
+        SystemClipboard.write(text)
+        return text.count
     }
-    
-    func cut() {
-        if let text = document.selectedText {
-            saveSnapshot()
-            clipboard = text
-            document.deleteSelection()
-            isDirty = true
-        }
+
+    /// Cut the selection to the clipboard; returns characters removed.
+    @discardableResult
+    func cut() -> Int {
+        guard let text = document.selectedText else { return 0 }
+        saveSnapshot()
+        clipboard = text
+        SystemClipboard.write(text)
+        document.deleteSelection()
+        isDirty = true
+        return text.count
     }
-    
-    func paste() {
-        guard !clipboard.isEmpty else { return }
-        pasteText(clipboard)
+
+    /// Paste from the clipboard; returns characters inserted.
+    @discardableResult
+    func paste() -> Int {
+        // Prefer the system clipboard so text copied in other apps pastes here;
+        // fall back to our own buffer when no clipboard tool is available.
+        let text = SystemClipboard.read() ?? clipboard
+        guard !text.isEmpty else { return 0 }
+        pasteText(text)
+        return text.count
     }
     
     func pasteText(_ text: String) {
@@ -733,6 +746,67 @@ class EditorState {
     
     func setViewportWidth(_ width: Int) {
         lastViewportWidth = width
+    }
+
+    // MARK: - Mouse selection
+
+    /// Start a selection at the document cell under a viewport press. `row` is
+    /// 0-based within the text viewport, `col` 0-based within the content area
+    /// (right of the gutter). A press with no drag leaves no selection.
+    func mousePress(row: Int, col: Int, viewportWidth: Int) {
+        let pos = documentPosition(visualRow: row, col: col, viewportWidth: viewportWidth)
+        document.cursorLine = pos.line
+        document.cursorColumn = pos.column
+        document.selectionAnchor = pos
+    }
+
+    /// Extend the in-progress mouse selection: move the cursor, keep the anchor.
+    func mouseDrag(row: Int, col: Int, viewportWidth: Int) {
+        let pos = documentPosition(visualRow: row, col: col, viewportWidth: viewportWidth)
+        document.cursorLine = pos.line
+        document.cursorColumn = pos.column
+    }
+
+    /// Map a viewport cell (visual row from the top of the viewport, column
+    /// right of the gutter) to a raw document position. Mirrors the cursor model:
+    /// wrapping is computed on the raw line, so positions stay consistent with
+    /// keyboard navigation (sub-character precision on collapsed markdown is
+    /// approximate, which self-corrects once the line renders raw under the cursor).
+    private func documentPosition(visualRow: Int, col: Int, viewportWidth: Int) -> CursorPosition {
+        let lineCount = document.lines.count
+        guard lineCount > 0 else { return CursorPosition(line: 0, column: 0) }
+        let wrapped = wordWrap && pendingEdit == nil && syntaxHighlighter == nil
+
+        if !wrapped {
+            let line = min(max(0, scrollOffset + visualRow), lineCount - 1)
+            return CursorPosition(line: line, column: rawColumn(in: line, visualCol: col + scrollX))
+        }
+
+        // Walk the document's raw-wrapped visual lines from the top.
+        let target = scrollOffset + max(0, visualRow)
+        var visual = 0
+        for li in 0..<lineCount {
+            let segs = wrapLineForNavigation(document.lines[li], width: max(1, viewportWidth))
+            if target < visual + segs.count {
+                let seg = segs[target - visual]
+                let isLast = (target - visual) == segs.count - 1
+                let maxCol = isLast ? document.lines[li].count : seg.startOffset + seg.segment.count
+                let column = min(seg.startOffset + max(0, col), maxCol)
+                return CursorPosition(line: li, column: column)
+            }
+            visual += segs.count
+        }
+        let last = lineCount - 1
+        return CursorPosition(line: last, column: document.lines[last].count)
+    }
+
+    /// Convert an on-screen visual column to a raw column on `line`, undoing the
+    /// collapse of inline markdown markers. Clamped to the line length.
+    private func rawColumn(in line: Int, visualCol: Int) -> Int {
+        let text = document.lines[line]
+        let spans = MarkdownLineParser.parse(text)
+        let raw = MarkdownLineParser.visualToRaw(column: max(0, visualCol), spans: spans)
+        return min(max(0, raw), text.count)
     }
     
     func moveLeft(selecting: Bool = false) {
