@@ -38,6 +38,10 @@ This is a **test** with *markdown*.
 
 ![Themes](demo/themes.gif)
 
+**Focus mode.** Dim everything but the line — or word — you're on. `Ctrl+B`.
+
+![Focus mode](demo/focus.gif)
+
 **Rendered or raw.** Flip the view with `Ctrl+R`.
 
 ![Rendered and raw](demo/raw.gif)
