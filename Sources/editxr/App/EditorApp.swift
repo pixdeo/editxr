@@ -587,6 +587,12 @@ class EditorApp {
             case Key.ctrlT:
                 state.cycleTaskState()
                 needsRender = true
+            case Key.tab:
+                // Tab cycles a task's state (only on a task line; never converts).
+                if state.cursorLineIsTask {
+                    state.cycleTaskState()
+                    needsRender = true
+                }
             case Key.ctrlSpace:
                 showLLMModal()
             case Key.ctrlE:
@@ -2645,7 +2651,7 @@ class EditorApp {
         let doc = state.document
         guard doc.cursorLine < doc.lines.count else { return nil }
         if let list = parseListLine(doc.lines[doc.cursorLine]), case .todo = list.kind {
-            return "^T toggle task"
+            return "^T/Tab toggle task"
         }
         return nil
     }

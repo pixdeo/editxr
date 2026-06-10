@@ -399,13 +399,102 @@ class EditorState {
         isDirty = true
     }
     
+    /// Enter, with auto-continuation: inside a list/task/quote it carries the
+    /// marker onto the next line; on an empty item it breaks out of the list;
+    /// inside a table it adds a blank row. Plain lines split normally.
     func handleNewline() {
-        saveSnapshot()
         if document.hasSelection {
+            saveSnapshot()
             document.deleteSelection()
+            document.insertNewline()
+            isDirty = true
+            return
         }
-        document.insertNewline()
+
+        let line = document.cursorLine < document.lines.count ? document.lines[document.cursorLine] : ""
+        saveSnapshot()
+        switch newlineAction(for: line) {
+        case .normal:
+            document.insertNewline()
+        case .exitList:
+            // Empty item: drop the marker and stay on the now-blank line.
+            document.lines[document.cursorLine] = ""
+            document.cursorColumn = 0
+        case .continueList(let prefix):
+            document.insertNewline()
+            for ch in prefix { document.insertCharacter(ch) }
+        case .newTableRow(let row, let cursorCol):
+            document.cursorColumn = line.count        // append below, don't split the row
+            document.insertNewline()
+            for ch in row { document.insertCharacter(ch) }
+            document.cursorColumn = min(cursorCol, document.lines[document.cursorLine].count)
+        }
         isDirty = true
+    }
+
+    private enum NewlineAction {
+        case normal
+        case exitList
+        case continueList(prefix: String)
+        case newTableRow(row: String, cursorCol: Int)
+    }
+
+    /// True when the cursor's line is a checkbox task (`- [ ] …`). Used to gate
+    /// Tab so it only cycles task state, never converts a plain line.
+    var cursorLineIsTask: Bool {
+        guard document.cursorLine < document.lines.count else { return false }
+        let chars = Array(document.lines[document.cursorLine])
+        var i = 0
+        while i < chars.count && chars[i].isWhitespace { i += 1 }
+        guard i < chars.count, "-*+".contains(chars[i]), i + 1 < chars.count, chars[i + 1] == " " else { return false }
+        return i + 4 < chars.count && chars[i + 2] == "[" && chars[i + 4] == "]"
+    }
+
+    private func newlineAction(for line: String) -> NewlineAction {
+        let chars = Array(line)
+        var i = 0
+        while i < chars.count && chars[i].isWhitespace { i += 1 }
+        let indent = String(chars[0..<i])
+
+        // Bullet or task: "<-|*|+> …", optionally "<-|*|+> [x] …"
+        if i < chars.count, "-*+".contains(chars[i]), i + 1 < chars.count, chars[i + 1] == " " {
+            let bullet = chars[i]
+            if i + 4 < chars.count, chars[i + 2] == "[", chars[i + 4] == "]" {
+                var j = i + 5
+                if j < chars.count && chars[j] == " " { j += 1 }
+                let content = j < chars.count ? String(chars[j...]) : ""
+                return content.trimmingCharacters(in: .whitespaces).isEmpty
+                    ? .exitList : .continueList(prefix: "\(indent)\(bullet) [ ] ")
+            }
+            let content = i + 2 <= chars.count ? String(chars[(i + 2)...]) : ""
+            return content.trimmingCharacters(in: .whitespaces).isEmpty
+                ? .exitList : .continueList(prefix: "\(indent)\(bullet) ")
+        }
+
+        // Blockquote: "> …"
+        if i < chars.count, chars[i] == ">" {
+            var j = i + 1
+            if j < chars.count && chars[j] == " " { j += 1 }
+            let content = j < chars.count ? String(chars[j...]) : ""
+            return content.trimmingCharacters(in: .whitespaces).isEmpty
+                ? .exitList : .continueList(prefix: "\(indent)> ")
+        }
+
+        // Table row: "| … | … |" → add a blank row with the same column count.
+        let trimmed = line.trimmingCharacters(in: .whitespaces)
+        if trimmed.hasPrefix("|"), trimmed.count > 1 {
+            var body = trimmed
+            body.removeFirst()
+            if body.hasSuffix("|") { body.removeLast() }
+            let cells = body.components(separatedBy: "|")
+            // A row of only blanks (or no cells) ends the table on Enter.
+            if !cells.isEmpty, cells.contains(where: { !$0.trimmingCharacters(in: .whitespaces).isEmpty }) {
+                let row = "|" + String(repeating: "  |", count: cells.count)
+                return .newTableRow(row: row, cursorCol: 2)
+            }
+        }
+
+        return .normal
     }
     
     func handleBackspace() {
