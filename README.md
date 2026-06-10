@@ -40,7 +40,7 @@ This is a **test** with *markdown*.
 
 **Focus mode.** Dim everything but the line — or word — you're on. `Ctrl+B`.
 
-![Focus mode](demo/focus.gif)
+![Focus mode](demo/focus-mode.gif)
 
 **Rendered or raw.** Flip the view with `Ctrl+R`.
 
