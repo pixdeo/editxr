@@ -1,0 +1,62 @@
+# Build the static Linux binaries (x86_64 + aarch64) with the Swift Static Linux
+# SDK (musl). On any push/PR they are uploaded as downloadable workflow
+# artifacts (so a build can be tested before tagging); on a tag they are also
+# attached to that tag's GitHub release.
+#
+# The macOS universal build stays a manual, signed and notarised local step
+# (scripts/release.sh), since it needs a Developer ID cert.
+name: release
+
+on:
+  push:
+    tags: ['v*']
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Tag to build and upload to, e.g. v1.1.0 (leave blank for a test build)'
+        required: false
+
+jobs:
+  linux:
+    runs-on: ubuntu-latest
+    # The Static Linux SDK must match the toolchain version; this image ships it.
+    container: swift:6.3.2
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          elif [[ -n "${{ github.event.inputs.version }}" ]]; then
+            echo "version=${{ github.event.inputs.version }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Install the Static Linux SDK (musl)
+        run: |
+          swift sdk install \
+            https://download.swift.org/swift-6.3.2-release/static-sdk/swift-6.3.2-RELEASE/swift-6.3.2-RELEASE_static-linux-0.1.0.artifactbundle.tar.gz \
+            --checksum 3fd798bef6f4408f1ea5a6f94ce4d4052830c4326ab85ebc04f983f01b3da407
+
+      - name: Build static Linux binaries
+        run: scripts/release-linux.sh "${{ steps.ver.outputs.version }}"
+
+      - name: Upload workflow artifacts (for testing)
+        uses: actions/upload-artifact@v4
+        with:
+          name: editxr-linux-${{ steps.ver.outputs.version }}
+          path: dist/*.tar.gz
+
+      - name: Attach to release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.ver.outputs.version }}
+          files: dist/*.tar.gz

@@ -16,9 +16,12 @@ the change as an inline diff before it lands.
 - Native Swift binary with no runtime dependencies. Runs on macOS 12+ and Linux.
 
 ## Install
-- One line (builds from source): `curl -fsSL https://raw.githubusercontent.com/pixdeo/editxr/main/install.sh | bash`
+- One line (downloads the prebuilt binary for your platform, falls back to source): `curl -fsSL https://raw.githubusercontent.com/pixdeo/editxr/main/install.sh | bash`
 - Homebrew: `brew install pixdeo/tap/editxr`
-- Signed binaries: https://github.com/pixdeo/editxr/releases
+- Prebuilt packages on each release (https://github.com/pixdeo/editxr/releases):
+  - macOS universal (signed & notarised): editxr-<version>-macos-universal.zip
+  - Linux x86_64 (static musl, no dependencies): editxr-<version>-linux-x86_64.tar.gz
+  - Linux aarch64 (static musl, no dependencies): editxr-<version>-linux-aarch64.tar.gz
 
 ## Links
 - Website: https://editxr.org
