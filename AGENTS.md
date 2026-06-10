@@ -44,6 +44,16 @@ Lint/format:
 - Sources/editxr/Views: TUI overlays and panels.
 - Sources/editxr/Utils: key bindings, theming, markdown parsing.
 
+## Releasing
+
+- See RELEASING.md for the full process and caveats. In short: macOS is a manual
+  signed/notarised local build (scripts/release.sh); the static Linux binaries
+  (x86_64 + aarch64) are built in CI on tag (.github/workflows/release.yml via
+  scripts/release-linux.sh). install.sh downloads the prebuilt for the platform
+  and falls back to building from source.
+- The Static Linux SDK version must match the Swift toolchain version exactly
+  (currently Swift 6.3.2 / static-linux 0.1.0); bump them together.
+
 ## Configuration and runtime behavior
 
 - User config file: ~/.config/editxr/config.json

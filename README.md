@@ -91,7 +91,8 @@ offline mode, so it runs with no account and no network.
 
 ## Install
 
-One-liner (builds from source; needs Xcode or the Command Line Tools):
+One-liner (downloads the prebuilt binary for your platform; falls back to
+building from source):
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/pixdeo/editxr/main/install.sh | bash
@@ -103,8 +104,18 @@ Homebrew (via the tap):
 brew install pixdeo/tap/editxr
 ```
 
-A signed, notarised universal binary is also attached to each
-[release](https://github.com/pixdeo/editxr/releases).
+Prebuilt binaries are attached to every
+[release](https://github.com/pixdeo/editxr/releases):
+
+| Platform | Package |
+| --- | --- |
+| macOS (Apple Silicon + Intel) | `editxr-<version>-macos-universal.zip` — signed & notarised universal binary |
+| Linux x86_64 | `editxr-<version>-linux-x86_64.tar.gz` — static (musl), no dependencies |
+| Linux aarch64 | `editxr-<version>-linux-aarch64.tar.gz` — static (musl), no dependencies |
+
+The Linux binaries are statically linked against musl, so a single download runs
+on any distro (Ubuntu, Debian, Alpine, Fedora, …) with no Swift runtime
+installed. To build from source instead, pass `FROM_SOURCE=1` to the installer.
 
 ## Build & run
 

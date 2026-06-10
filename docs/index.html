@@ -131,6 +131,11 @@
     padding: 1rem; overflow-x: auto; color: var(--text); font-size: .88rem; margin: .5rem 0 1.25rem;
   }
   .install .label { color: var(--muted); font-size: .85rem; }
+  .install table { width: 100%; border-collapse: collapse; margin: .5rem 0 1.25rem; font-size: .88rem; }
+  .install th, .install td { text-align: left; padding: .55rem .75rem; border-bottom: 1px solid var(--border); vertical-align: top; }
+  .install th { color: var(--muted); font-weight: 600; }
+  .install td code { color: var(--accent); background: var(--accent-soft); padding: .1em .4em; border-radius: 4px; }
+  .install td .note { color: var(--muted); display: block; margin-top: .25rem; }
 
   footer { border-top: 1px solid var(--border); padding: 2.5rem 0 3rem; text-align: center; color: var(--muted); font-size: .85rem; }
   footer a { color: var(--muted); }
@@ -218,11 +223,29 @@
 <section class="install" id="install">
   <div class="wrap">
     <h2><span class="hash">#</span> Install</h2>
-    <p class="label">One line (builds from source; needs Xcode or the Command Line Tools, or Swift on Linux):</p>
+    <p class="label">One line (downloads the prebuilt binary for your platform; falls back to source):</p>
     <pre>curl -fsSL https://raw.githubusercontent.com/pixdeo/editxr/main/install.sh | bash</pre>
     <p class="label">Homebrew:</p>
     <pre>brew install pixdeo/tap/editxr</pre>
-    <p class="label">Or grab a signed, notarised binary from the <a href="https://github.com/pixdeo/editxr/releases">releases</a>.</p>
+    <p class="label">Or grab a package from the <a href="https://github.com/pixdeo/editxr/releases">releases</a>:</p>
+    <table>
+      <tr><th>Platform</th><th>Package</th></tr>
+      <tr>
+        <td>macOS · Apple Silicon + Intel</td>
+        <td><code>editxr-&lt;version&gt;-macos-universal.zip</code>
+          <span class="note">Signed &amp; notarised universal binary.</span></td>
+      </tr>
+      <tr>
+        <td>Linux · x86_64</td>
+        <td><code>editxr-&lt;version&gt;-linux-x86_64.tar.gz</code>
+          <span class="note">Static (musl) — runs on any distro, no Swift runtime needed.</span></td>
+      </tr>
+      <tr>
+        <td>Linux · aarch64</td>
+        <td><code>editxr-&lt;version&gt;-linux-aarch64.tar.gz</code>
+          <span class="note">Static (musl) — runs on any distro, no Swift runtime needed.</span></td>
+      </tr>
+    </table>
   </div>
 </section>
 
