@@ -439,6 +439,32 @@ class EditorState {
         case newTableRow(row: String, cursorCol: Int)
     }
 
+    /// Heading level (1–3) of the cursor's line, or nil if it isn't a heading.
+    var cursorHeadingLevel: Int? {
+        guard document.cursorLine < document.lines.count else { return nil }
+        let chars = Array(document.lines[document.cursorLine])
+        var n = 0
+        while n < chars.count && n < 3 && chars[n] == "#" { n += 1 }
+        guard n >= 1, n < chars.count, chars[n] == " " else { return nil }
+        return n
+    }
+
+    /// Change the cursor line's heading level by `delta` "#" marks, clamped to
+    /// 1–3 (the levels editxr renders). `delta < 0` promotes (bigger heading),
+    /// `delta > 0` demotes. No-op on non-heading lines.
+    func adjustHeadingLevel(by delta: Int) {
+        guard let level = cursorHeadingLevel else { return }
+        let newLevel = max(1, min(3, level + delta))
+        guard newLevel != level else { return }
+        saveSnapshot()
+        let chars = Array(document.lines[document.cursorLine])
+        let content = String(chars[(level + 1)...])
+        document.lines[document.cursorLine] = String(repeating: "#", count: newLevel) + " " + content
+        let shift = newLevel - level
+        document.cursorColumn = max(0, min(document.cursorColumn + shift, document.lines[document.cursorLine].count))
+        isDirty = true
+    }
+
     /// True when the cursor's line is a checkbox task (`- [ ] …`). Used to gate
     /// Tab so it only cycles task state, never converts a plain line.
     var cursorLineIsTask: Bool {

@@ -588,9 +588,13 @@ class EditorApp {
                 state.cycleTaskState()
                 needsRender = true
             case Key.tab:
-                // Tab cycles a task's state (only on a task line; never converts).
+                // Tab cycles a task's state, or promotes a heading (### → ## → #,
+                // "bigger title"). Both are gated, so plain lines are untouched.
                 if state.cursorLineIsTask {
                     state.cycleTaskState()
+                    needsRender = true
+                } else if state.cursorHeadingLevel != nil {
+                    state.adjustHeadingLevel(by: -1)
                     needsRender = true
                 }
             case Key.ctrlSpace:
@@ -801,6 +805,9 @@ class EditorApp {
             state.pageUp(viewportHeight: viewportHeight)
         case .pageDown:
             state.pageDown(viewportHeight: viewportHeight)
+        case .shiftTab:
+            // Demote a heading (# → ## → ###, "less title"). Headings only.
+            state.adjustHeadingLevel(by: 1)
         }
         render()
     }
@@ -2653,6 +2660,9 @@ class EditorApp {
         if let list = parseListLine(doc.lines[doc.cursorLine]), case .todo = list.kind {
             return "^T/Tab toggle task"
         }
+        if state.cursorHeadingLevel != nil {
+            return "Tab/⇧Tab title size"
+        }
         return nil
     }
 
@@ -2857,6 +2867,7 @@ enum ArrowKey {
     case ctrlShiftLeft, ctrlShiftRight
     case pageUp, pageDown
     case home, end
+    case shiftTab
 }
 
 class ArrowKeyParser {
@@ -2924,10 +2935,11 @@ class ArrowKeyParser {
             case "D": arrowKey = .left
             case "H": arrowKey = .home
             case "F": arrowKey = .end
+            case "Z": arrowKey = .shiftTab
             default: break
             }
             return true
-            
+
         case .pageKey:
             state = .initial
             if character == "~" && !buffer.isEmpty {
