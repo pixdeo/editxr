@@ -39,10 +39,11 @@ for arch in "${ARCHES[@]}"; do
     triple="${arch}-swift-linux-musl"
     scratch=".build-linux-${arch}"
     echo "==> Building static Linux binary (${arch}, ${VERSION})"
-    "$SWIFT" build -c release --swift-sdk "$triple" --scratch-path "$scratch"
+    # -Xlinker -s strips symbols at link time via lld, so it works for whichever
+    # arch we're cross-compiling (a host `strip` only handles its native arch).
+    "$SWIFT" build -c release --swift-sdk "$triple" --scratch-path "$scratch" -Xlinker -s
 
     bin="$("$SWIFT" build -c release --swift-sdk "$triple" --scratch-path "$scratch" --show-bin-path)/editxr"
-    strip "$bin" 2>/dev/null || true   # GNU strip on Linux; skipped elsewhere
 
     out="editxr-${VERSION}-linux-${arch}"
     stage="dist/stage-${arch}"
