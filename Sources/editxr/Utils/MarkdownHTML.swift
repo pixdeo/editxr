@@ -88,6 +88,13 @@ enum MarkdownHTML {
                 continue
             }
 
+            // Thematic break
+            if isThematicBreak(t) {
+                html += "<hr>\n"
+                i += 1
+                continue
+            }
+
             // Table
             if isTableRow(t), i + 1 < lines.count, isTableSeparator(lines[i + 1]) {
                 var rows: [String] = []
@@ -147,6 +154,7 @@ enum MarkdownHTML {
     private static func startsBlock(_ t: String, next: String?) -> Bool {
         if t.hasPrefix("#") && heading(t) != nil { return true }
         if t.hasPrefix("```") || t.hasPrefix(">") { return true }
+        if isThematicBreak(t) { return true }
         if listItem(t) != nil { return true }
         if isTableRow(t), let n = next, isTableSeparator(n) { return true }
         return false
@@ -161,11 +169,20 @@ enum MarkdownHTML {
         return (level, rest.trimmingCharacters(in: .whitespaces))
     }
 
+    /// A thematic break: only `-`, `*`, or `_` (3+ of the same char, spaces ok).
+    private static func isThematicBreak(_ t: String) -> Bool {
+        let stripped = t.filter { !$0.isWhitespace }
+        guard stripped.count >= 3, let first = stripped.first,
+              first == "-" || first == "*" || first == "_" else { return false }
+        return stripped.allSatisfy { $0 == first }
+    }
+
     private static func listItem(_ t: String) -> (checked: Bool?, content: String)? {
         guard let first = t.first, "-*+".contains(first), t.dropFirst().first == " " else { return nil }
         var content = String(t.dropFirst(2))
         let lower = content.lowercased()
         if lower.hasPrefix("[ ] ") { return (false, String(content.dropFirst(4))) }
+        if lower.hasPrefix("[*] ") { return (false, String(content.dropFirst(4))) }
         if lower.hasPrefix("[x] ") { return (true, String(content.dropFirst(4))) }
         content = content.trimmingCharacters(in: .whitespaces)
         return (nil, content)

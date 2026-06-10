@@ -147,6 +147,7 @@ other LLM providers work as usual.
 | `Ctrl+Q` / `Ctrl+D` | Quit |
 | `Ctrl+R` | Toggle rendered / raw view |
 | `Ctrl+W` | Toggle word wrap |
+| `Ctrl+T` | Cycle task state (`[ ]` → `[*]` → `[x]`) |
 | `Ctrl+L` | Toggle line numbers |
 | `Ctrl+P` | Command palette / settings |
 | `Ctrl+Space` | AI assist (edit the section) |

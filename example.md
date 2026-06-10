@@ -19,7 +19,15 @@ soft-wrap to the window width when word wrap is on (toggle with Ctrl+W).
 ### Tasks
 
 - [ ] An open task
+- [*] One in progress
 - [x] A finished one
+
+Place the cursor on a task and press Ctrl+T to cycle its state:
+`[ ]` → `[*]` → `[x]` → `[ ]`.
+
+---
+
+A `---` on its own line renders as a horizontal rule.
 
 ## Table
 

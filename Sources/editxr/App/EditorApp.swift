@@ -15,6 +15,7 @@ private enum SegmentRenderMode {
     case quote(QuoteRender)
     case frontmatterDelimiter
     case frontmatterProp(key: String, value: String)
+    case horizontalRule
 }
 
 private enum TodoState {
@@ -515,6 +516,9 @@ class EditorApp {
                 needsRender = true
             case Key.ctrlW:
                 state.toggleWordWrap()
+                needsRender = true
+            case Key.ctrlT:
+                state.cycleTaskState()
                 needsRender = true
             case Key.ctrlSpace:
                 showLLMModal()
@@ -1224,7 +1228,13 @@ class EditorApp {
             } else if inCodeBlock || isCodeDelimiter {
                 renderedLine = renderCodeBlockLine(line: line, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn, width: width)
             } else {
-                if let quote = parseQuoteLine(line) {
+                if isHorizontalRule(line) {
+                    if isCursorLine {
+                        renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
+                    } else {
+                        renderedLine = renderHorizontalRule(width: width)
+                    }
+                } else if let quote = parseQuoteLine(line) {
                     if isCursorLine {
                         renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
                     } else {
@@ -1581,6 +1591,12 @@ class EditorApp {
         if inCodeBlock || isCodeDelimiter {
             return (line, .codeBlock)
         }
+        if isHorizontalRule(line) {
+            if isCursorLine {
+                return (line, .raw)
+            }
+            return (String(repeating: "─", count: width), .horizontalRule)
+        }
         if let heading = headingSpan {
             if isCursorLine {
                 return (line, .raw)
@@ -1652,6 +1668,8 @@ class EditorApp {
             return renderFrontmatterDelimiter(width: segment.count > 0 ? segment.count : 40)
         case .frontmatterProp(let key, let value):
             return renderFrontmatterProp(key: key, value: value)
+        case .horizontalRule:
+            return renderHorizontalRule(width: segment.count > 0 ? segment.count : width)
         }
     }
     
@@ -1822,6 +1840,21 @@ class EditorApp {
     }
 
     private func renderFrontmatterDelimiter(width: Int) -> String {
+        let line = String(repeating: "─", count: max(3, width))
+        return "\(Theme.textMuted)\(line)\(Theme.reset)"
+    }
+
+    /// A thematic break: a line that is only `-`, `*`, or `_` (3 or more of the
+    /// same character, spaces allowed between them). Frontmatter `---` is handled
+    /// separately and never reaches here.
+    private func isHorizontalRule(_ line: String) -> Bool {
+        let stripped = line.filter { !$0.isWhitespace }
+        guard stripped.count >= 3, let first = stripped.first,
+              first == "-" || first == "*" || first == "_" else { return false }
+        return stripped.allSatisfy { $0 == first }
+    }
+
+    private func renderHorizontalRule(width: Int) -> String {
         let line = String(repeating: "─", count: max(3, width))
         return "\(Theme.textMuted)\(line)\(Theme.reset)"
     }

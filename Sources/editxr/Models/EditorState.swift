@@ -443,6 +443,72 @@ class EditorState {
         isDirty = true
     }
 
+    /// Cycle the task state of the current line (or every line in the selection)
+    /// through `[ ]` → `[*]` → `[x]` → `[ ]`. A plain bullet becomes an empty
+    /// task; a non-list line becomes a `- [ ]` task.
+    func cycleTaskState() {
+        let startLine: Int
+        let endLine: Int
+        if let range = document.selectionRange {
+            startLine = range.start.line
+            endLine = range.end.line
+        } else {
+            startLine = document.cursorLine
+            endLine = document.cursorLine
+        }
+
+        var newLines = document.lines
+        var changed = false
+        for idx in startLine...endLine where idx < newLines.count {
+            let updated = cycledTaskLine(newLines[idx])
+            if updated != newLines[idx] {
+                newLines[idx] = updated
+                changed = true
+            }
+        }
+        guard changed else { return }
+
+        saveSnapshot()
+        document.lines = newLines
+        if document.cursorLine < document.lines.count {
+            document.cursorColumn = min(document.cursorColumn, document.lines[document.cursorLine].count)
+        }
+        document.clearSelection()
+        isDirty = true
+    }
+
+    private func cycledTaskLine(_ line: String) -> String {
+        let chars = Array(line)
+        var i = 0
+        while i < chars.count && chars[i].isWhitespace { i += 1 }
+        let indent = String(chars[0..<i])
+
+        // Existing bullet "<-|*|+> ..."
+        if i < chars.count, "-*+".contains(chars[i]), i + 1 < chars.count, chars[i + 1] == " " {
+            let bullet = chars[i]
+            // Existing task "<bullet> [<state>] ..."
+            if i + 4 < chars.count, chars[i + 2] == "[", chars[i + 4] == "]" {
+                let nextState: Character
+                switch chars[i + 3] {
+                case " ": nextState = "*"          // empty → in progress
+                case "*": nextState = "x"          // in progress → done
+                case "x", "X": nextState = " "     // done → empty
+                default: return line               // unrecognized box, leave alone
+                }
+                var out = chars
+                out[i + 3] = nextState
+                return String(out)
+            }
+            // Plain bullet → empty task
+            let rest = String(chars[(i + 2)...])
+            return "\(indent)\(bullet) [ ] \(rest)"
+        }
+
+        // Non-list line → empty task
+        let rest = String(chars[i...])
+        return "\(indent)- [ ] \(rest)"
+    }
+
     func copy() {
         if let text = document.selectedText {
             clipboard = text
