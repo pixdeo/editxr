@@ -181,6 +181,7 @@ class EditorApp {
             toggleCommand("Toggle scroll past end", "") { [weak self] in self?.state.toggleScrollPastEnd() },
             toggleCommand("Toggle big status bar", state.statusBarBig ? "big" : "slim") { [weak self] in self?.state.toggleStatusBarBig() },
             toggleCommand("Toggle contextual hints", state.contextHelp ? "on" : "off") { [weak self] in self?.state.toggleContextHelp() },
+            toggleCommand("Toggle block mode", state.blockMode ? "on" : "off") { [weak self] in self?.state.toggleBlockMode() },
             toggleCommand("Toggle full table borders", "") { [weak self] in self?.state.toggleFullTable() },
             PaletteCommand(title: "Set left margin", shortcut: "\(state.leftMargin)") { [weak self] in
                 guard let self = self else { return }
@@ -1283,6 +1284,7 @@ class EditorApp {
             }
             
             let isCursorLine = i == doc.cursorLine
+            let inHandle = isCursorLine && state.cursorInBlockHandle
             var renderedLine: String
 
             if let tableLine = tableMap[i] {
@@ -1307,19 +1309,25 @@ class EditorApp {
                 renderedLine = renderCodeBlockLine(line: line, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn, width: width)
             } else {
                 if isHorizontalRule(line) {
-                    if isCursorLine {
+                    if inHandle {
+                        renderedLine = highlightFirstGlyph(renderHorizontalRule(width: width))
+                    } else if isCursorLine {
                         renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
                     } else {
                         renderedLine = renderHorizontalRule(width: width)
                     }
                 } else if let quote = parseQuoteLine(line) {
-                    if isCursorLine {
+                    if inHandle {
+                        renderedLine = highlightFirstGlyph(renderQuoteLine(quote))
+                    } else if isCursorLine {
                         renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
                     } else {
                         renderedLine = renderQuoteLine(quote)
                     }
                 } else if let list = parseListLine(line) {
-                    if isCursorLine {
+                    if inHandle {
+                        renderedLine = highlightFirstGlyph(renderListLine(list))
+                    } else if isCursorLine {
                         renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
                     } else {
                         renderedLine = renderListLine(list)
@@ -1329,7 +1337,9 @@ class EditorApp {
                     let isHeading = spans.first.map { isHeadingSpan($0) } ?? false
                     let cursorInSpan = isCursorLine ? MarkdownLineParser.spanContainingCursor(column: doc.cursorColumn, spans: spans) : nil
 
-                    if (isHeading && isCursorLine) || cursorInSpan != nil {
+                    if inHandle && isHeading {
+                        renderedLine = highlightFirstGlyph(renderLineCollapsed(line: line, spans: spans, isCursorLine: false, cursorColumn: 0))
+                    } else if (isHeading && isCursorLine) || cursorInSpan != nil {
                         renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
                     } else {
                         renderedLine = renderLineCollapsed(line: line, spans: spans, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn)
@@ -1438,10 +1448,17 @@ class EditorApp {
                     }
                 }
 
-                if !block.contains(cursorLine) {
+                // Keep the table rendered when the cursor only rests at a row's
+                // start (block-mode handle); drop to raw once it's editing (col > 0).
+                if !block.contains(cursorLine) || state.cursorInBlockHandle {
                     for r in block {
                         let role: TableRole = r == i ? .header : (r == i + 1 ? .separator : .data)
-                        map[r] = renderTableRow(line: lines[r], role: role, widths: widths, numCols: numCols, width: width)
+                        var rendered = renderTableRow(line: lines[r], role: role, widths: widths, numCols: numCols, width: width)
+                        // Mark the row the cursor rests on (it'd otherwise vanish).
+                        if r == cursorLine && state.cursorInBlockHandle {
+                            rendered = highlightFirstGlyph(rendered)
+                        }
+                        map[r] = rendered
                     }
                     // Full-box borders reuse the blank lines surrounding the table.
                     if state.fullTable {
@@ -1554,15 +1571,17 @@ class EditorApp {
             }
 
             let isCursorLine = i == doc.cursorLine
+            let inHandle = isCursorLine && state.cursorInBlockHandle
             let spans = MarkdownLineParser.parse(line)
             let headingSpan = spans.first.flatMap { isHeadingSpan($0) ? $0 : nil }
             let cursorInSpan = isCursorLine ? MarkdownLineParser.spanContainingCursor(column: doc.cursorColumn, spans: spans) : nil
-            
+
             let (lineToWrap, mode) = resolveLineMode(
                 line: line,
                 lineIndex: i,
                 doc: doc,
                 isCursorLine: isCursorLine,
+                inHandle: inHandle,
                 headingSpan: headingSpan,
                 cursorInSpan: cursorInSpan,
                 inCodeBlock: inCodeBlock,
@@ -1591,7 +1610,7 @@ class EditorApp {
                     width: width
                 )
                 
-                let renderedLine = applyFocus(
+                var renderedLine = applyFocus(
                     renderSegment(
                         segment: segment,
                         mode: mode,
@@ -1605,6 +1624,10 @@ class EditorApp {
                     ),
                     rawText: segment, baseColumn: segmentStart, lineIndex: i
                 )
+                // Mark the handle on the first row of the block.
+                if inHandle && segmentIndex == 0 {
+                    renderedLine = highlightFirstGlyph(renderedLine)
+                }
 
                 let gutter = segmentIndex == 0
                     ? renderGutter(lineNumber: i + 1, width: gutterWidth)
@@ -1633,6 +1656,7 @@ class EditorApp {
         lineIndex: Int,
         doc: Document,
         isCursorLine: Bool,
+        inHandle: Bool,
         headingSpan: MarkdownSpan?,
         cursorInSpan: MarkdownSpan?,
         inCodeBlock: Bool,
@@ -1670,26 +1694,26 @@ class EditorApp {
             return (line, .codeBlock)
         }
         if isHorizontalRule(line) {
-            if isCursorLine {
+            if isCursorLine && !inHandle {
                 return (line, .raw)
             }
             return (String(repeating: "─", count: width), .horizontalRule)
         }
         if let heading = headingSpan {
-            if isCursorLine {
+            if isCursorLine && !inHandle {
                 return (line, .raw)
             }
             return (heading.content, .heading(headingStyle(heading.kind)))
         }
         if let quote = parseQuoteLine(line) {
-            if isCursorLine {
+            if isCursorLine && !inHandle {
                 return (line, .raw)
             }
             let render = makeQuoteRender(quote)
             return (render.prefix + quote.content, .quote(render))
         }
         if let list = parseListLine(line) {
-            if isCursorLine {
+            if isCursorLine && !inHandle {
                 return (line, .raw)
             }
             let render = makeListRender(list)
@@ -1935,6 +1959,38 @@ class EditorApp {
     private func renderHorizontalRule(width: Int) -> String {
         let line = String(repeating: "─", count: max(3, width))
         return "\(Theme.textMuted)\(line)\(Theme.reset)"
+    }
+
+    /// Wrap the first visible glyph of an already-styled line in inverse video —
+    /// the block-mode "handle" cursor. SGR escape sequences are copied verbatim;
+    /// the glyph uses 7m/27m so the surrounding colour is preserved.
+    private func highlightFirstGlyph(_ s: String) -> String {
+        var out = ""
+        var i = s.startIndex
+        var marked = false
+        while i < s.endIndex {
+            let c = s[i]
+            if c == "\u{1B}" {
+                out.append(c)
+                var j = s.index(after: i)
+                while j < s.endIndex {
+                    let cj = s[j]
+                    out.append(cj)
+                    j = s.index(after: j)
+                    if cj.isLetter { break }
+                }
+                i = j
+                continue
+            }
+            if !marked {
+                out += "\u{1B}[7m\(c)\u{1B}[27m"
+                marked = true
+            } else {
+                out.append(c)
+            }
+            i = s.index(after: i)
+        }
+        return out
     }
 
     private func renderFrontmatterProp(key: String, value: String) -> String {
@@ -2725,7 +2781,12 @@ class EditorApp {
             append("\(Theme.accent)search:\(Theme.statusBarText)\(q)\(cursor)\(info)", visible: 7 + q.count + 1 + infoVisible)
         }
 
-        let right = "\(doc.wordCount) words | Ln \(doc.cursorLine + 1), Col \(doc.cursorColumn + 1)"
+        // Active modes, shown on the right ahead of the word count / position.
+        // Only on-modes appear (their presence is the "on"); off-modes are hidden.
+        var modes: [String] = []
+        if state.blockMode { modes.append("block mode") }
+        let modePrefix = modes.isEmpty ? "" : modes.joined(separator: " | ") + " | "
+        let right = "\(modePrefix)\(doc.wordCount) words | Ln \(doc.cursorLine + 1), Col \(doc.cursorColumn + 1)"
         let padding = innerWidth - leftVisible - right.count
         let spaces = String(repeating: " ", count: max(0, padding))
         return "\(Theme.statusBarText)\(left)\(spaces)\(right)"

@@ -51,6 +51,9 @@ class EditorState {
     var fullTable: Bool = true
     /// Contextual status-bar hints (e.g. "^T toggle task" on a task line).
     var contextHelp: Bool = true
+    /// Block mode: at column 0 of a structured line, show it rendered (a "handle")
+    /// and only drop to raw once you move right or start typing.
+    var blockMode: Bool = true
     var leftMargin: Int = 1
     var themeName: ThemeName = .system
     var appearance: Appearance = .auto
@@ -100,6 +103,7 @@ class EditorState {
         self.scrollPastEnd = config.scrollPastEnd ?? true
         self.fullTable = config.fullTable ?? true
         self.contextHelp = config.contextHelp ?? true
+        self.blockMode = config.blockMode ?? true
         self.leftMargin = max(0, min(8, config.leftMargin ?? 1))
         self.scrollMargin = max(0, min(20, config.scrollOff ?? 4))
         // Clay is the default on first run; a saved choice still wins.
@@ -276,6 +280,11 @@ class EditorState {
         saveConfig()
     }
 
+    func toggleBlockMode() {
+        blockMode.toggle()
+        saveConfig()
+    }
+
     func setLeftMargin(_ value: Int) {
         leftMargin = max(0, min(8, value))
         saveConfig()
@@ -349,6 +358,7 @@ class EditorState {
         config.scrollPastEnd = scrollPastEnd
         config.fullTable = fullTable
         config.contextHelp = contextHelp
+        config.blockMode = blockMode
         config.leftMargin = leftMargin
         config.scrollOff = scrollMargin
         config.theme = themeName.rawValue
@@ -411,6 +421,15 @@ class EditorState {
             return
         }
 
+        // At column 0 (e.g. a block handle) don't auto-continue — just open a
+        // line above, so the marker isn't duplicated.
+        if document.cursorColumn == 0 {
+            saveSnapshot()
+            document.insertNewline()
+            isDirty = true
+            return
+        }
+
         let line = document.cursorLine < document.lines.count ? document.lines[document.cursorLine] : ""
         saveSnapshot()
         switch newlineAction(for: line) {
@@ -437,6 +456,54 @@ class EditorState {
         case exitList
         case continueList(prefix: String)
         case newTableRow(row: String, cursorCol: Int)
+    }
+
+    /// Length of the structural prefix (heading hashes, bullet, checkbox, quote
+    /// bar) at the start of `line`, i.e. the column where its content begins, or
+    /// nil if the line has no such structure. Drives block mode.
+    func structuredPrefixLength(of line: String) -> Int? {
+        let chars = Array(line)
+        // Heading: "# " … "### " (no indentation).
+        var h = 0
+        while h < chars.count && h < 3 && chars[h] == "#" { h += 1 }
+        if h >= 1, h < chars.count, chars[h] == " " { return h + 1 }
+
+        var i = 0
+        while i < chars.count && chars[i].isWhitespace { i += 1 }
+        // Bullet or task.
+        if i < chars.count, "-*+".contains(chars[i]), i + 1 < chars.count, chars[i + 1] == " " {
+            if i + 4 < chars.count, chars[i + 2] == "[", chars[i + 4] == "]" {
+                var j = i + 5
+                if j < chars.count && chars[j] == " " { j += 1 }
+                return j
+            }
+            return i + 2
+        }
+        // Blockquote.
+        if i < chars.count, chars[i] == ">" {
+            var j = i + 1
+            if j < chars.count && chars[j] == " " { j += 1 }
+            return j
+        }
+        return nil
+    }
+
+    /// True when the cursor sits at the start of a structured line and block mode
+    /// is on — the line shows rendered and keys "operate" rather than edit.
+    var cursorInBlockHandle: Bool {
+        guard blockMode, !document.hasSelection, document.cursorColumn == 0,
+              document.cursorLine < document.lines.count else { return false }
+        let line = document.lines[document.cursorLine]
+        if structuredPrefixLength(of: line) != nil || isThematicBreakLine(line) { return true }
+        // A table row (renders inside the bordered grid).
+        return line.trimmingCharacters(in: .whitespaces).hasPrefix("|")
+    }
+
+    /// A `---` / `***` / `___` thematic break (renders as a horizontal rule).
+    private func isThematicBreakLine(_ line: String) -> Bool {
+        let s = line.filter { !$0.isWhitespace }
+        guard s.count >= 3, let f = s.first, f == "-" || f == "*" || f == "_" else { return false }
+        return s.allSatisfy { $0 == f }
     }
 
     /// Heading level (1–3) of the cursor's line, or nil if it isn't a heading.
@@ -959,7 +1026,7 @@ class EditorState {
     
     func moveRight(selecting: Bool = false) {
         if selecting { document.startSelection() } else { document.clearSelection() }
-        
+
         let line = document.currentLineText
         let spans = MarkdownLineParser.parse(line)
         let cursorInSpan = MarkdownLineParser.spanContainingCursor(column: document.cursorColumn, spans: spans)
