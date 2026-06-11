@@ -136,10 +136,35 @@ final class CommandPanel {
 
     private var filteredCommands: [PaletteCommand] {
         guard !query.isEmpty else { return commands }
-        let q = query.lowercased()
         // While searching, flatten the whole subtree (descending into submenus)
         // so a command nested a level down still shows up and runs in place.
-        return flattenForSearch(commands).filter { $0.title.lowercased().contains(q) }
+        // Fuzzy subsequence match + ranking, so "blomo" finds "Toggle block mode".
+        let scored = flattenForSearch(commands).enumerated().compactMap { (idx, cmd) -> (cmd: PaletteCommand, score: Int, idx: Int)? in
+            guard let s = Self.fuzzyScore(query: query, in: cmd.title) else { return nil }
+            return (cmd, s, idx)
+        }
+        return scored.sorted { $0.score != $1.score ? $0.score > $1.score : $0.idx < $1.idx }.map { $0.cmd }
+    }
+
+    /// Score a fuzzy (subsequence) match of `query` against `title`, or nil if
+    /// the query chars don't all appear in order. Higher is better: consecutive
+    /// runs and word-start hits score more, so the tightest match floats up.
+    static func fuzzyScore(query: String, in title: String) -> Int? {
+        let q = Array(query.lowercased())
+        let t = Array(title.lowercased())
+        guard !q.isEmpty else { return 0 }
+        var qi = 0
+        var score = 0
+        var lastHit = -2
+        for (ti, ch) in t.enumerated() {
+            guard qi < q.count, ch == q[qi] else { continue }
+            if q[qi] == " " { score += 1; lastHit = ti; qi += 1; continue }
+            score += (ti == lastHit + 1) ? 6 : 1          // reward consecutive runs
+            if ti == 0 || t[ti - 1] == " " { score += 4 } // reward word starts
+            lastHit = ti
+            qi += 1
+        }
+        return qi == q.count ? score : nil
     }
 
     /// Depth-first list of the selectable rows in `cmds` and every submenu they
