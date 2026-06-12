@@ -191,6 +191,26 @@ Settings (theme, appearance, provider, keys) persist to
 
 ## Roadmap
 
+- [ ] **Second-brain / multi-file editing.** Grow editxr from a single-document
+  editor toward an Obsidian-like workspace, in order of difficulty: (1) tabs for
+  multiple open files; (2) recursive directory scan with a fuzzy quick-switcher
+  (reuses the command palette's matcher); (3) navigable `[text](path)` and
+  `[[wikilinks]]` that open in a tab; (4) a sidebar file list; (5) a live
+  backlinks panel (a link graph re-indexed on save). Prerequisite for the
+  sidebar/panels: extract a **render compositor** so regions render into their
+  own width and compose horizontally (the ANSI/display-width splicing primitive
+  already exists in `spliceVisible`), instead of each renderer assuming it owns
+  the full content width.
+- [ ] **Page-wise keyboard selection that survives the terminal.** Shift+PageUp/
+  PageDown selection is wired, but Terminal.app and iTerm2 bind those to their
+  own scrollback by default, so the app never receives them. Add an alternative
+  keybinding for page selection that terminals don't intercept.
+- [ ] **Windows support.** editxr is POSIX-only today (`termios`, `ioctl`,
+  signals, `/dev/tty`). Porting it means putting those behind a small platform
+  layer with a Windows console backend (`GetConsoleMode` / VT processing). If you
+  want to take it on, [`PORTING_TO_WINDOWS.md`](PORTING_TO_WINDOWS.md) maps every
+  blocker to its Windows replacement, with a file:line table and a work
+  checklist.
 - [ ] **Homebrew tap.** Publish `pixdeo/homebrew-tap` with the formula so
   `brew install pixdeo/tap/editxr` works.
 - [ ] **Inline image rendering.** Draw Markdown images (`![alt](pic.png)`)
