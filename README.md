@@ -193,9 +193,9 @@ Settings (theme, appearance, provider, keys) persist to
 
 - [ ] **Second-brain / multi-file editing.** Grow editxr from a single-document
   editor toward an Obsidian-like workspace, in order of difficulty: (1) tabs for
-  multiple open files; (2) recursive directory scan with a fuzzy quick-switcher
-  (reuses the command palette's matcher); (3) navigable `[text](path)` and
-  `[[wikilinks]]` that open in a tab; (4) a sidebar file list; (5) a live
+  multiple open files ✅; (2) recursive directory scan with a fuzzy quick-switcher
+  (`Ctrl+O`) ✅; (3) navigable `[text](path)` and `[[wikilinks]]` that open in a
+  tab; (4) a sidebar file list (`editxr ./folder` opens a folder); (5) a live
   backlinks panel (a link graph re-indexed on save). Prerequisite for the
   sidebar/panels: extract a **render compositor** so regions render into their
   own width and compose horizontally (the ANSI/display-width splicing primitive
