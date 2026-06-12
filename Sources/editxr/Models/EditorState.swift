@@ -1148,20 +1148,29 @@ class EditorState {
         return wrapLineForNavigation(line, width: width).count
     }
     
-    func pageUp(viewportHeight: Int) {
+    func pageUp(viewportHeight: Int, selecting: Bool = false) {
+        if selecting { document.startSelection() } else { document.clearSelection() }
         let pageSize = viewportHeight - scrollMargin
         document.cursorLine = max(0, document.cursorLine - pageSize)
         document.cursorColumn = min(document.cursorColumn, document.currentLineText.count)
-        document.clearSelection()
         scrollOffset = max(0, scrollOffset - pageSize)
     }
-    
-    func pageDown(viewportHeight: Int) {
+
+    func pageDown(viewportHeight: Int, selecting: Bool = false) {
+        if selecting { document.startSelection() } else { document.clearSelection() }
         let pageSize = viewportHeight - scrollMargin
         document.cursorLine = min(document.lines.count - 1, document.cursorLine + pageSize)
         document.cursorColumn = min(document.cursorColumn, document.currentLineText.count)
-        document.clearSelection()
         scrollOffset = min(max(0, document.lines.count - viewportHeight), scrollOffset + pageSize)
+    }
+
+    /// Select the whole document: anchor at the very start, cursor at the very end.
+    func selectAll() {
+        guard !document.lines.isEmpty else { return }
+        document.selectionAnchor = CursorPosition(line: 0, column: 0)
+        let lastLine = document.lines.count - 1
+        document.cursorLine = lastLine
+        document.cursorColumn = document.lines[lastLine].count
     }
 
     // MARK: - Find

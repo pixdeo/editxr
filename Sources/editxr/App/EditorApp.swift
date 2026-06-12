@@ -129,6 +129,7 @@ class EditorApp {
         cmds.append(.spacer)
         cmds.append(.header("Edit"))
         cmds += [
+            PaletteCommand(title: "Select all", shortcut: "^A") { [weak self] in self?.state.selectAll() },
             PaletteCommand(title: "Find", shortcut: "^F") { [weak self] in self?.state.beginSearch() },
             PaletteCommand(title: "Find next", shortcut: "^G") { [weak self] in self?.state.searchNext() },
             PaletteCommand(title: "Undo", shortcut: "^U") { [weak self] in self?.state.undo() },
@@ -545,6 +546,9 @@ class EditorApp {
             case Key.ctrlS:
                 state.save()
                 needsRender = true
+            case Key.ctrlA:
+                state.selectAll()
+                needsRender = true
             case Key.ctrlR:
                 state.toggleViewMode()
                 needsRender = true
@@ -806,6 +810,15 @@ class EditorApp {
             state.pageUp(viewportHeight: viewportHeight)
         case .pageDown:
             state.pageDown(viewportHeight: viewportHeight)
+        // TODO: Shift+PageUp/PageDown only reaches us when the terminal forwards
+        // the modified sequence (ESC [ 5;2 ~ / ESC [ 6;2 ~). Terminal.app and
+        // iTerm2 instead bind those to their own scrollback by default, so the
+        // app never sees them there. Revisit with an alternative keybinding for
+        // page-wise selection that terminals don't intercept.
+        case .shiftPageUp:
+            state.pageUp(viewportHeight: viewportHeight, selecting: true)
+        case .shiftPageDown:
+            state.pageDown(viewportHeight: viewportHeight, selecting: true)
         case .shiftTab:
             // Demote a heading (# → ## → ###, "less title"). Headings only.
             state.adjustHeadingLevel(by: 1)
@@ -2927,6 +2940,7 @@ enum ArrowKey {
     case ctrlUp, ctrlDown
     case ctrlShiftLeft, ctrlShiftRight
     case pageUp, pageDown
+    case shiftPageUp, shiftPageDown
     case home, end
     case shiftTab
 }
@@ -2944,6 +2958,7 @@ class ArrowKeyParser {
         case semicolon
         case modifierValue
         case pageKey
+        case pageModifier
         case ss3
     }
     
@@ -3002,6 +3017,12 @@ class ArrowKeyParser {
             return true
 
         case .pageKey:
+            // A modifier follows (e.g. ESC [ 5 ; 2 ~ == Shift+PageUp); keep the
+            // page digit in buffer[0] and read the modifier next.
+            if character == ";" {
+                state = .pageModifier
+                return true
+            }
             state = .initial
             if character == "~" && !buffer.isEmpty {
                 if buffer[0] == "5" {
@@ -3012,6 +3033,28 @@ class ArrowKeyParser {
                     arrowKey = .end
                 }
             }
+            return true
+
+        case .pageModifier:
+            // ESC [ <page> ; <mod> ~ — buffer[0] is the page digit, the next
+            // digit is the modifier (2 == Shift), then a closing "~". The "~"
+            // is consumed here so it never leaks into the buffer as literal text.
+            if character == "~" {
+                let page = buffer.first
+                let isShift = buffer.count > 1 && buffer[1] == "2"
+                switch (page, isShift) {
+                case ("5", true): arrowKey = .shiftPageUp
+                case ("5", false): arrowKey = .pageUp
+                case ("6", true): arrowKey = .shiftPageDown
+                case ("6", false): arrowKey = .pageDown
+                case ("4", _): arrowKey = .end
+                default: break
+                }
+                state = .initial
+                return true
+            }
+            // Accumulate the modifier digit(s) until the closing "~".
+            buffer.append(character)
             return true
 
         case .modifier:
