@@ -12,12 +12,13 @@ if arguments.contains("--help") || arguments.contains("-h") {
     exit(0)
 }
 
-// First non-flag argument is the file to open.
-guard let filePath = arguments.dropFirst().first(where: { !$0.hasPrefix("-") }) else {
+// Every non-flag argument is a file to open; the first one is focused.
+let filePaths = arguments.dropFirst().filter { !$0.hasPrefix("-") }
+guard !filePaths.isEmpty else {
     print(AppInfo.helpText)
     exit(1)
 }
 
-let state = EditorState(filePath: filePath)
-let app = EditorApp(state: state)
+let states = filePaths.map { EditorState(filePath: $0) }
+let app = EditorApp(states: states)
 app.start()

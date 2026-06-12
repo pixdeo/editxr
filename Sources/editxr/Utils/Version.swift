@@ -11,7 +11,7 @@ enum AppInfo {
         \(name) \(version) — \(tagline)
 
         Usage:
-          \(name) <file>       Open or create a Markdown file
+          \(name) <file>...    Open or create Markdown files (one tab each)
           \(name) --help       Show this help
           \(name) --version    Print the version
 

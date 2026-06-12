@@ -53,7 +53,11 @@ private struct QuoteRender {
 }
 
 class EditorApp {
-    private let state: EditorState
+    /// Open documents, one per tab. `activeTab` indexes the focused one; `state`
+    /// is the focused document, used throughout the rest of the app.
+    private var states: [EditorState]
+    private var activeTab = 0
+    private var state: EditorState { states[activeTab] }
     private var stdInSource: DispatchSourceRead?
     private var arrowKeyParser = ArrowKeyParser()
     private let llmService = LLMService()
@@ -80,11 +84,14 @@ class EditorApp {
     private let toastHoldFrames = 16
     private let toastFadeFrames = 18
 
-    init(state: EditorState) {
-        self.state = state
-        showSplash = state.document.lines.allSatisfy { $0.isEmpty }
-        state.onSavedIndicatorChanged = { [weak self] in
-            self?.render()
+    init(states: [EditorState]) {
+        self.states = states
+        // The welcome splash is only meaningful for a lone, empty document.
+        showSplash = states.count == 1 && states[0].document.lines.allSatisfy { $0.isEmpty }
+        for st in states {
+            st.onSavedIndicatorChanged = { [weak self] in
+                self?.render()
+            }
         }
         
         llmModal = LLMModal(llmService: llmService)
@@ -125,6 +132,16 @@ class EditorApp {
             PaletteCommand(title: "Export to HTML", shortcut: "^E") { [weak self] in self?.exportToHTML() },
             PaletteCommand(title: "Quit", shortcut: "^Q") { [weak self] in self?.quit() },
         ]
+
+        if states.count > 1 {
+            cmds.append(.spacer)
+            cmds.append(.header("Tabs"))
+            cmds += [
+                PaletteCommand(title: "Next tab", shortcut: "^N") { [weak self] in self?.switchTab(by: 1) },
+                PaletteCommand(title: "Previous tab", shortcut: "") { [weak self] in self?.switchTab(by: -1) },
+                PaletteCommand(title: "Close tab", shortcut: "") { [weak self] in self?.closeActiveTab() },
+            ]
+        }
 
         cmds.append(.spacer)
         cmds.append(.header("Edit"))
@@ -592,6 +609,9 @@ class EditorApp {
             case Key.ctrlT:
                 state.cycleTaskState()
                 needsRender = true
+            case Key.ctrlN:
+                switchTab(by: 1)
+                needsRender = true
             case Key.tab:
                 // Tab cycles a task's state, or promotes a heading (### → ## → #,
                 // "bigger title"). Both are gated, so plain lines are untouched.
@@ -993,6 +1013,10 @@ class EditorApp {
         // Top bar (filename + optional markdown title) + status + hint bars.
         var reservedLines = 3
 
+        // A tab strip above the top bar, only when more than one file is open.
+        let showTabs = states.count > 1
+        if showTabs { reservedLines += 1 }
+
         // The AI prompt grows the big status box (which hosts it inline); with the
         // slim bar it falls back to a block stacked above the status line.
         let modalVisible = llmModal?.isVisible ?? false
@@ -1013,7 +1037,11 @@ class EditorApp {
         state.adjustScroll(viewportHeight: contentHeight, viewportWidth: contentWidth)
 
         let margin = String(repeating: " ", count: state.leftMargin)
-        var lines: [String] = [padToWidth(margin + renderTopBar(width: width - state.leftMargin), width: width)]
+        var lines: [String] = []
+        if showTabs {
+            lines.append(padToWidth(margin + renderTabBar(width: width - state.leftMargin), width: width))
+        }
+        lines.append(padToWidth(margin + renderTopBar(width: width - state.leftMargin), width: width))
 
         var content: [String]
         if showSplash && state.document.lines.allSatisfy({ $0.isEmpty }) {
@@ -2654,6 +2682,23 @@ class EditorApp {
         return truncateToWidth(content, width: width)
     }
 
+    /// One row of tab labels, the focused one inverted; modified tabs get a dot.
+    private func renderTabBar(width: Int) -> String {
+        var segments: [String] = []
+        for (i, st) in states.enumerated() {
+            let name = (st.filePath as NSString).lastPathComponent
+            let dot = st.isDirty ? " ●" : ""
+            let label = " \(name)\(dot) "
+            if i == activeTab {
+                segments.append("\(Theme.inverse)\(label)\(Theme.reset)")
+            } else {
+                segments.append("\(Theme.textMuted)\(label)\(Theme.reset)")
+            }
+        }
+        let sep = "\(Theme.textMuted)│\(Theme.reset)"
+        return truncateToWidth(segments.joined(separator: sep), width: width)
+    }
+
     /// Nerd Font glyph for the open file, by extension (markdown gets its mark,
     /// other text files a generic document icon).
     private func fileIcon(for path: String) -> String {
@@ -2924,8 +2969,22 @@ class EditorApp {
         }
     }
     
+    /// Cycle the focused tab by `delta`, wrapping around. No-op with one tab.
+    private func switchTab(by delta: Int) {
+        guard states.count > 1 else { return }
+        activeTab = ((activeTab + delta) % states.count + states.count) % states.count
+    }
+
+    /// Close the focused tab (persisting its cursor). Closing the last one quits.
+    private func closeActiveTab() {
+        guard states.count > 1 else { quit(); return }
+        states[activeTab].persistCursorPosition()
+        states.remove(at: activeTab)
+        if activeTab >= states.count { activeTab = states.count - 1 }
+    }
+
     private func quit() {
-        state.persistCursorPosition()
+        states.forEach { $0.persistCursorPosition() }
         showCursor()
         exitAlternateScreen()
         resetInputMode()

@@ -2,6 +2,7 @@ import Foundation
 
 enum Key {
     static let ctrlA: Character = "\u{01}"
+    static let ctrlN: Character = "\u{0E}"
     static let ctrlD: Character = "\u{04}"
     static let ctrlS: Character = "\u{13}"
     static let ctrlR: Character = "\u{12}"
