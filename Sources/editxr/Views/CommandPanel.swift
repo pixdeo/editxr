@@ -473,7 +473,10 @@ final class CommandPanel {
         let shortcut = cmd.shortcut
         let titleAvail = max(1, contentWidth - (shortcut.isEmpty ? 0 : shortcut.displayWidth + 1))
         let title = truncate(cmd.title, to: titleAvail)
-        let gap = max(1, contentWidth - title.displayWidth - shortcut.displayWidth)
+        // A row with no shortcut needs no trailing gap; forcing one here would
+        // push a full-width title a column past the border (ragged right edge).
+        let minGap = shortcut.isEmpty ? 0 : 1
+        let gap = max(minGap, contentWidth - title.displayWidth - shortcut.displayWidth)
         let gapSpaces = String(repeating: " ", count: gap)
 
         let bg = selected ? Theme.selectionBg : Theme.statusBarBg

@@ -24,6 +24,7 @@ enum AppInfo {
           Ctrl+T    cycle task state   Ctrl+B   focus mode (line / word)
           Ctrl+C    copy               Ctrl+X   cut
           Ctrl+V    paste              Ctrl+A   select all
+          Ctrl+O    open file          Ctrl+N   next tab
         """
     }
 }

@@ -58,6 +58,9 @@ class EditorApp {
     private var states: [EditorState]
     private var activeTab = 0
     private var state: EditorState { states[activeTab] }
+    /// Scanned file list for the quick-switcher, cached for the lifetime of one
+    /// panel session so searching doesn't re-walk the directory per keystroke.
+    private var fileCommandCache: [PaletteCommand]?
     private var stdInSource: DispatchSourceRead?
     private var arrowKeyParser = ArrowKeyParser()
     private let llmService = LLMService()
@@ -128,6 +131,9 @@ class EditorApp {
 
         cmds.append(.header("File"))
         cmds += [
+            // keepsOpen so activating it swaps the panel into the file switcher
+            // (a fresh scan) instead of closing — the scan only runs on demand.
+            PaletteCommand(title: "Open file", shortcut: "^O", keepsOpen: true) { [weak self] in self?.openQuickSwitcher() },
             PaletteCommand(title: "Save", shortcut: "^S") { [weak self] in self?.state.save() },
             PaletteCommand(title: "Export to HTML", shortcut: "^E") { [weak self] in self?.exportToHTML() },
             PaletteCommand(title: "Quit", shortcut: "^Q") { [weak self] in self?.quit() },
@@ -612,6 +618,8 @@ class EditorApp {
             case Key.ctrlN:
                 switchTab(by: 1)
                 needsRender = true
+            case Key.ctrlO:
+                openQuickSwitcher()
             case Key.tab:
                 // Tab cycles a task's state, or promotes a heading (### → ## → #,
                 // "bigger title"). Both are gated, so plain lines are untouched.
@@ -2981,6 +2989,70 @@ class EditorApp {
         states[activeTab].persistCursorPosition()
         states.remove(at: activeTab)
         if activeTab >= states.count { activeTab = states.count - 1 }
+    }
+
+    // MARK: - Quick switcher / open file
+
+    private func absolutePath(_ path: String) -> String {
+        URL(fileURLWithPath: path).standardizedFileURL.path
+    }
+
+    /// Replace control characters (tabs, newlines, etc.) with spaces so a stray
+    /// one in a filename can't desync the panel's column accounting.
+    private func sanitizedLabel(_ s: String) -> String {
+        String(s.map { ch -> Character in
+            let v = ch.unicodeScalars.first?.value ?? 0
+            return (v < 0x20 || v == 0x7F) ? " " : ch
+        })
+    }
+
+    /// The directory the quick-switcher scans: the folder of the first open file,
+    /// falling back to the working directory.
+    private func vaultRoot() -> String {
+        let first = states.first?.filePath ?? "."
+        let dir = URL(fileURLWithPath: first).standardizedFileURL.deletingLastPathComponent().path
+        return dir.isEmpty ? FileManager.default.currentDirectoryPath : dir
+    }
+
+    /// Open `path` in a tab: focus it if already open, otherwise add a new tab.
+    private func openFile(_ path: String) {
+        let target = absolutePath(path)
+        if let idx = states.firstIndex(where: { absolutePath($0.filePath) == target }) {
+            activeTab = idx
+        } else {
+            let st = EditorState(filePath: path)
+            st.onSavedIndicatorChanged = { [weak self] in self?.render() }
+            states.append(st)
+            activeTab = states.count - 1
+        }
+        showSplash = false
+    }
+
+    /// The scanned vault as palette rows (cached); already-open files are marked.
+    private func fileSwitcherCommands() -> [PaletteCommand] {
+        if let cached = fileCommandCache { return cached }
+        let root = vaultRoot()
+        let openPaths = Set(states.map { absolutePath($0.filePath) })
+        let cmds = DirectoryScanner.scan(root: root).map { rel -> PaletteCommand in
+            let full = absolutePath(root + "/" + rel)
+            let isOpen = openPaths.contains(full)
+            // Display name with control chars (tabs/newlines that some files carry)
+            // flattened to spaces, so they can't throw off the panel's width math.
+            return PaletteCommand(title: sanitizedLabel(rel), shortcut: isOpen ? "open" : "") { [weak self] in
+                self?.openFile(full)
+            }
+        }
+        fileCommandCache = cmds
+        return cmds
+    }
+
+    /// Open the quick-switcher: a fresh directory scan in the command panel.
+    private func openQuickSwitcher() {
+        guard let panel = commandPanel else { return }
+        fileCommandCache = nil
+        panel.setRoot(title: "Open file") { [weak self] in self?.fileSwitcherCommands() ?? [] }
+        panel.show()
+        render()
     }
 
     private func quit() {
