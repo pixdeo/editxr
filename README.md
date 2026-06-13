@@ -59,6 +59,13 @@ This is a **test** with *markdown*.
 - **Live Markdown rendering.** Headings, emphasis, lists, task lists, tables,
   blockquotes, code blocks, and YAML frontmatter are styled in place, while the
   line you're editing stays plain text.
+- **Multi-file workspace.** Open files in tabs (`editxr a.md b.md`, or `Ctrl+O`
+  to fuzzy-find any file in the folder tree). `Ctrl+N` cycles tabs, `Ctrl+[`
+  goes back to the previous file, `Ctrl+W` closes the tab.
+- **Navigable links.** `[text](file.md)` and Obsidian-style `[[wikilinks]]`
+  render collapsed to their underlined title and open on `Ctrl+]` or a click —
+  local files in a tab, `http(s)`/`mailto` in the browser. The raw form reveals
+  when the cursor lands on the link, so it stays editable.
 - **AI section editing.** Rewrite the selection or current block with an LLM and
   review it as a red/green inline diff: `y` to accept, `n` to reject. Prompt
   history recalls with ↑/↓.
@@ -146,7 +153,11 @@ other LLM providers work as usual.
 | `Ctrl+S` | Save |
 | `Ctrl+Q` / `Ctrl+D` | Quit |
 | `Ctrl+R` | Toggle rendered / raw view |
-| `Ctrl+W` | Toggle word wrap |
+| `Ctrl+O` | Open file (fuzzy quick-switcher) |
+| `Ctrl+N` | Next tab |
+| `Ctrl+W` | Close tab |
+| `Ctrl+]` | Follow link under cursor (or click a link) |
+| `Ctrl+[` / `Esc` | Back to the previous file |
 | `Ctrl+T` | Cycle task state (`[ ]` → `[*]` → `[x]`) |
 | `Ctrl+L` | Toggle line numbers |
 | `Ctrl+P` | Command palette / settings |
@@ -159,7 +170,7 @@ other LLM providers work as usual.
 | `Ctrl+H` | Delete word backward |
 | `Ctrl+/` | Toggle help bar |
 | Arrows / Shift+Arrows | Move / select |
-| Mouse | Wheel scrolls; click places the cursor; drag selects |
+| Mouse | Wheel scrolls; click places the cursor (or follows a link); drag selects |
 | `Ctrl+←/→` | Move by word |
 | `Home` / `End` / `PgUp` / `PgDn` | Navigate |
 
