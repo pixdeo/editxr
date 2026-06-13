@@ -7,6 +7,7 @@ enum SpanKind {
     case heading1
     case heading2
     case heading3
+    case link        // [text](url) or [[wiki]] — content is the display text
 }
 
 struct MarkdownSpan {
@@ -19,16 +20,10 @@ struct MarkdownSpan {
     
     var rawRange: Range<Int> { rawStart..<rawEnd }
     var contentRange: Range<Int> { contentStart..<contentEnd }
-    var markerLength: Int {
-        switch kind {
-        case .bold: return 2
-        case .italic: return 1
-        case .code: return 1
-        case .heading1: return 2
-        case .heading2: return 3
-        case .heading3: return 4
-        }
-    }
+    /// Hidden characters before the content (e.g. "**", "[") and after it
+    /// (e.g. "**", "](url)"). Markers may be asymmetric (links).
+    var leadLength: Int { contentStart - rawStart }
+    var tailLength: Int { rawEnd - contentEnd }
 }
 
 struct MarkdownLineParser {
@@ -66,10 +61,18 @@ struct MarkdownLineParser {
                     continue
                 }
             }
-            
+
+            if chars[i] == "[" {
+                if let span = parseLink(chars: chars, startIndex: i) {
+                    spans.append(span)
+                    i = span.rawEnd
+                    continue
+                }
+            }
+
             i += 1
         }
-        
+
         return spans
     }
     
@@ -182,6 +185,50 @@ struct MarkdownLineParser {
         return nil
     }
     
+    /// Parse a link starting at "[": either [[wiki]] / [[wiki|alias]] or
+    /// [text](url). `content` is the display text, so the span collapses to it
+    /// (underlined) and reveals raw when the cursor lands inside.
+    private static func parseLink(chars: [Character], startIndex: Int) -> MarkdownSpan? {
+        let n = chars.count
+
+        // Wikilink: [[ name (| alias)? ]]
+        if startIndex + 1 < n, chars[startIndex + 1] == "[" {
+            var i = startIndex + 2
+            var pipe: Int? = nil
+            while i + 1 < n {
+                if chars[i] == "[" { return nil }                 // malformed
+                if chars[i] == "]" && chars[i + 1] == "]" {
+                    let contentStart = (pipe.map { $0 + 1 }) ?? (startIndex + 2)
+                    let contentEnd = i
+                    guard contentEnd > contentStart else { return nil }
+                    return MarkdownSpan(kind: .link, rawStart: startIndex, rawEnd: i + 2,
+                                        contentStart: contentStart, contentEnd: contentEnd,
+                                        content: String(chars[contentStart..<contentEnd]))
+                }
+                if chars[i] == "|" && pipe == nil { pipe = i }
+                i += 1
+            }
+            return nil
+        }
+
+        // Inline link: [text](url)
+        var j = startIndex + 1
+        while j < n && chars[j] != "]" {
+            if chars[j] == "[" { return nil }                     // nested bracket
+            j += 1
+        }
+        guard j + 1 < n, chars[j + 1] == "(" else { return nil }
+        var k = j + 2
+        while k < n && chars[k] != ")" { k += 1 }
+        guard k < n else { return nil }
+        let contentStart = startIndex + 1
+        let contentEnd = j
+        guard contentEnd > contentStart else { return nil }       // empty text → leave raw
+        return MarkdownSpan(kind: .link, rawStart: startIndex, rawEnd: k + 1,
+                            contentStart: contentStart, contentEnd: contentEnd,
+                            content: String(chars[contentStart..<contentEnd]))
+    }
+
     /// Check if cursor (raw column) is inside any span
     static func spanContainingCursor(column: Int, spans: [MarkdownSpan]) -> MarkdownSpan? {
         for span in spans {
@@ -192,29 +239,30 @@ struct MarkdownLineParser {
         return nil
     }
     
-    /// Convert raw column to visual column (collapsed view)
+    /// Convert raw column to visual column (collapsed view). Handles asymmetric
+    /// markers (links) via the per-side lead/tail lengths.
     static func rawToVisual(column: Int, spans: [MarkdownSpan]) -> Int {
         var offset = 0
-        
+
         for span in spans {
             if column <= span.rawStart {
                 // Cursor is before this span
                 break
             } else if column >= span.rawEnd {
-                // Cursor is after this span - subtract both markers
-                offset += span.markerLength * 2
+                // Cursor is after this span - both markers are hidden
+                offset += span.leadLength + span.tailLength
             } else if column >= span.contentStart && column < span.contentEnd {
-                // Cursor is inside content - subtract opening marker only
-                offset += span.markerLength
+                // Cursor is inside content - only the opening marker is hidden
+                offset += span.leadLength
             } else if column < span.contentStart {
-                // Cursor is in opening marker
+                // Cursor is in the opening marker
                 offset += column - span.rawStart
             } else {
-                // Cursor is in closing marker
-                offset += span.markerLength + (column - span.contentEnd)
+                // Cursor is in the closing marker
+                offset += span.leadLength + (column - span.contentEnd)
             }
         }
-        
+
         return column - offset
     }
     

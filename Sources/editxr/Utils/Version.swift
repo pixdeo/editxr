@@ -3,7 +3,7 @@ import Foundation
 /// App identity + CLI help text, shared by `main` and the welcome splash.
 enum AppInfo {
     static let name = "editxr"
-    static let version = "1.1.2"
+    static let version = "1.2.0"
     static let tagline = "a minimalist Markdown editor for the terminal"
 
     static var helpText: String {
@@ -20,11 +20,12 @@ enum AppInfo {
           Ctrl+S    save               Ctrl+Q   quit
           Ctrl+F    find               Ctrl+G   find next
           Ctrl+Space  AI assist        Ctrl+E   export to HTML
-          Ctrl+R    toggle raw view    Ctrl+W   toggle word wrap
+          Ctrl+R    toggle raw view    Ctrl+W   close tab
           Ctrl+T    cycle task state   Ctrl+B   focus mode (line / word)
           Ctrl+C    copy               Ctrl+X   cut
           Ctrl+V    paste              Ctrl+A   select all
           Ctrl+O    open file          Ctrl+N   next tab
+          Ctrl+]    follow link        Ctrl+[   back (previous file)
         """
     }
 }

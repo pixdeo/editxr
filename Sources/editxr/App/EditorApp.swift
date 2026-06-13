@@ -58,6 +58,9 @@ class EditorApp {
     private var states: [EditorState]
     private var activeTab = 0
     private var state: EditorState { states[activeTab] }
+    /// Visited-tab history for "back" (Ctrl+[ / Esc): each focus change pushes
+    /// the outgoing tab so we can return to where we came from.
+    private var backStack: [EditorState] = []
     /// Scanned file list for the quick-switcher, cached for the lifetime of one
     /// panel session so searching doesn't re-walk the directory per keystroke.
     private var fileCommandCache: [PaletteCommand]?
@@ -134,6 +137,7 @@ class EditorApp {
             // keepsOpen so activating it swaps the panel into the file switcher
             // (a fresh scan) instead of closing — the scan only runs on demand.
             PaletteCommand(title: "Open file", shortcut: "^O", keepsOpen: true) { [weak self] in self?.openQuickSwitcher() },
+            PaletteCommand(title: "Follow link under cursor", shortcut: "^]") { [weak self] in self?.followLinkUnderCursor() },
             PaletteCommand(title: "Save", shortcut: "^S") { [weak self] in self?.state.save() },
             PaletteCommand(title: "Export to HTML", shortcut: "^E") { [weak self] in self?.exportToHTML() },
             PaletteCommand(title: "Quit", shortcut: "^Q") { [weak self] in self?.quit() },
@@ -144,8 +148,8 @@ class EditorApp {
             cmds.append(.header("Tabs"))
             cmds += [
                 PaletteCommand(title: "Next tab", shortcut: "^N") { [weak self] in self?.switchTab(by: 1) },
-                PaletteCommand(title: "Previous tab", shortcut: "") { [weak self] in self?.switchTab(by: -1) },
-                PaletteCommand(title: "Close tab", shortcut: "") { [weak self] in self?.closeActiveTab() },
+                PaletteCommand(title: "Back (previous file)", shortcut: "esc") { [weak self] in self?.goToPreviousTab() },
+                PaletteCommand(title: "Close tab", shortcut: "^W") { [weak self] in self?.closeActiveTab() },
             ]
         }
 
@@ -198,7 +202,7 @@ class EditorApp {
     private func editorMenuCommands() -> [PaletteCommand] {
         return [
             toggleCommand("Toggle raw view", "^R") { [weak self] in self?.state.toggleViewMode() },
-            toggleCommand("Toggle word wrap", "^W") { [weak self] in self?.state.toggleWordWrap() },
+            toggleCommand("Toggle word wrap", "") { [weak self] in self?.state.toggleWordWrap() },
             toggleCommand("Toggle line numbers", "^L") { [weak self] in self?.state.toggleLineNumbers() },
             toggleCommand("Focus mode (^B)", state.focusMode.label) { [weak self] in self?.state.cycleFocusMode() },
             toggleCommand("Toggle help bar", "^/") { [weak self] in self?.state.toggleHelp() },
@@ -546,6 +550,16 @@ class EditorApp {
             return
         }
 
+        // A lone ESC byte is the Escape key — and Ctrl+[, which sends the same
+        // byte. In the editor (no modal/panel/search open by this point) it goes
+        // "back" to the previously-focused tab. Escape sequences (arrows, mouse)
+        // arrive as ESC + more in one read, so they don't match this.
+        if string == "\u{1B}" {
+            goToPreviousTab()
+            render()
+            return
+        }
+
         var needsRender = false
 
         // Index-based so Ctrl+F can hand the rest of a coalesced buffer (e.g.
@@ -610,7 +624,7 @@ class EditorApp {
                 state.searchNext()
                 needsRender = true
             case Key.ctrlW:
-                state.toggleWordWrap()
+                closeActiveTab()
                 needsRender = true
             case Key.ctrlT:
                 state.cycleTaskState()
@@ -620,6 +634,8 @@ class EditorApp {
                 needsRender = true
             case Key.ctrlO:
                 openQuickSwitcher()
+            case Key.ctrlRightBracket:
+                followLinkUnderCursor()
             case Key.tab:
                 // Tab cycles a task's state, or promotes a heading (### → ## → #,
                 // "bigger title"). Both are gated, so plain lines are untouched.
@@ -1581,6 +1597,7 @@ class EditorApp {
             case .bold:   style = "\(base)\(Theme.bold)"
             case .italic: style = "\(base)\(Theme.italic)"
             case .code:   style = Theme.string
+            case .link:   style = "\(Theme.accent)\(Theme.underline)"
             default:      style = base
             }
             emit(span.content, style)
@@ -2131,6 +2148,7 @@ class EditorApp {
                     case .heading1: style = Theme.heading1
                     case .heading2: style = Theme.heading2
                     case .heading3: style = Theme.heading3
+                    case .link: style = Theme.accent + Theme.underline
                     }
                     break
                 }
@@ -2474,6 +2492,7 @@ class EditorApp {
             case .heading1: style = Theme.heading1
             case .heading2: style = Theme.heading2
             case .heading3: style = Theme.heading3
+            case .link: style = Theme.accent + Theme.underline
             }
 
             result += renderWithCursor(text: span.content, style: style, visualPos: &visualPos, cursorCol: visualCursorCol)
@@ -2939,6 +2958,14 @@ class EditorApp {
             case 65: wheel += 1                 // wheel down
             case 0 where !e.release:            // left press
                 state.mousePress(row: row, col: col, viewportWidth: viewportWidth)
+                // A click that lands on a link follows it instead of just
+                // placing the cursor (links render as raw text, so the cursor
+                // column maps straight through).
+                if MarkdownLink.linkAt(line: state.document.currentLineText,
+                                       column: state.document.cursorColumn) != nil {
+                    followLinkUnderCursor()
+                    return
+                }
                 changed = true
             case 32:                            // left drag (button 0 + motion)
                 state.mouseDrag(row: row, col: col, viewportWidth: viewportWidth)
@@ -2977,17 +3004,39 @@ class EditorApp {
         }
     }
     
+    /// Focus tab `index`, recording the outgoing tab in the back history.
+    private func focusTab(_ index: Int, recordHistory: Bool = true) {
+        guard index >= 0, index < states.count, index != activeTab else { return }
+        if recordHistory { backStack.append(states[activeTab]) }
+        activeTab = index
+        showSplash = false
+    }
+
     /// Cycle the focused tab by `delta`, wrapping around. No-op with one tab.
     private func switchTab(by delta: Int) {
         guard states.count > 1 else { return }
-        activeTab = ((activeTab + delta) % states.count + states.count) % states.count
+        focusTab(((activeTab + delta) % states.count + states.count) % states.count)
+    }
+
+    /// Ctrl+[ / Esc — return to the previously-focused tab, skipping any closed
+    /// since. Falls back to the previous tab in order when there's no history.
+    private func goToPreviousTab() {
+        while let prev = backStack.popLast() {
+            if let idx = states.firstIndex(where: { $0 === prev }) {
+                focusTab(idx, recordHistory: false)
+                return
+            }
+        }
+        switchTab(by: -1)
     }
 
     /// Close the focused tab (persisting its cursor). Closing the last one quits.
     private func closeActiveTab() {
         guard states.count > 1 else { quit(); return }
-        states[activeTab].persistCursorPosition()
+        let closing = states[activeTab]
+        closing.persistCursorPosition()
         states.remove(at: activeTab)
+        backStack.removeAll { $0 === closing }
         if activeTab >= states.count { activeTab = states.count - 1 }
     }
 
@@ -3018,14 +3067,100 @@ class EditorApp {
     private func openFile(_ path: String) {
         let target = absolutePath(path)
         if let idx = states.firstIndex(where: { absolutePath($0.filePath) == target }) {
-            activeTab = idx
+            focusTab(idx)
         } else {
+            backStack.append(states[activeTab])
             let st = EditorState(filePath: path)
             st.onSavedIndicatorChanged = { [weak self] in self?.render() }
             states.append(st)
             activeTab = states.count - 1
+            showSplash = false
         }
-        showSplash = false
+        fileCommandCache = nil   // the set of open files changed
+    }
+
+    // MARK: - Follow links
+
+    /// Open the link under the cursor: file links in a tab, http(s)/mailto in the
+    /// browser, [[wikilinks]] resolved by name against the vault.
+    private func followLinkUnderCursor() {
+        guard let target = MarkdownLink.linkAt(line: state.document.currentLineText,
+                                               column: state.document.cursorColumn) else {
+            showToast("No link under cursor")
+            return
+        }
+        switch target {
+        case .path(let raw): followPathLink(raw)
+        case .wiki(let name): followWikiLink(name)
+        }
+    }
+
+    private func followPathLink(_ raw: String) {
+        let target = raw.trimmingCharacters(in: .whitespaces)
+        if target.hasPrefix("http://") || target.hasPrefix("https://") || target.hasPrefix("mailto:") {
+            openExternally(target)
+            return
+        }
+        // Drop any #anchor, then resolve relative to the current file's folder.
+        var path = target
+        if let hash = path.firstIndex(of: "#") { path = String(path[..<hash]) }
+        guard !path.isEmpty else { return }
+        let resolved = resolveRelative(path)
+        if FileManager.default.fileExists(atPath: resolved) {
+            openFile(resolved)
+            render()
+        } else {
+            showToast("Not found: \(path)")
+        }
+    }
+
+    private func followWikiLink(_ name: String) {
+        // Obsidian heading/block refs ([[Note#Heading]], [[Note^block]]): open
+        // the note, ignoring the in-note anchor.
+        var base = name
+        if let anchor = base.firstIndex(where: { $0 == "#" || $0 == "^" }) {
+            base = String(base[..<anchor]).trimmingCharacters(in: .whitespaces)
+        }
+        guard !base.isEmpty, let path = resolveWikiName(base) else {
+            showToast("No note named \(name)")
+            return
+        }
+        openFile(path)
+        render()
+    }
+
+    private func resolveRelative(_ path: String) -> String {
+        if path.hasPrefix("/") { return absolutePath(path) }
+        let baseDir = URL(fileURLWithPath: state.filePath).standardizedFileURL.deletingLastPathComponent()
+        return baseDir.appendingPathComponent(path).standardizedFileURL.path
+    }
+
+    /// Resolve a wikilink name to a vault file: a file whose basename (sans
+    /// extension) matches, preferring an exact relative-path hit.
+    private func resolveWikiName(_ name: String) -> String? {
+        let root = vaultRoot()
+        let wanted = name.lowercased()
+        let wantedNoExt = ((wanted as NSString).lastPathComponent as NSString).deletingPathExtension
+        var fallback: String?
+        for rel in DirectoryScanner.scan(root: root) {
+            let relLower = rel.lowercased()
+            let noExt = ((relLower as NSString).lastPathComponent as NSString).deletingPathExtension
+            guard noExt == wantedNoExt else { continue }
+            let full = absolutePath(root + "/" + rel)
+            if relLower == wanted || (relLower as NSString).deletingPathExtension == wanted {
+                return full
+            }
+            if fallback == nil { fallback = full }
+        }
+        return fallback
+    }
+
+    private func openExternally(_ target: String) {
+        let p = Process()
+        p.executableURL = URL(fileURLWithPath: "/usr/bin/open")
+        p.arguments = [target]
+        try? p.run()
+        showToast("Opening \(target)")
     }
 
     /// The scanned vault as palette rows (cached); already-open files are marked.
