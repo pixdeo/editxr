@@ -1,0 +1,34 @@
+# Windows compile signal. The windows-latest runner is x86_64, so this builds
+# the Intel/AMD64 target natively — the direct answer to "does editxr compile on
+# Windows?". The ARM64 path is exercised separately (local QEMU VM); since the
+# `#if os(Windows)` code is OS-level (Win32 console API), not arch-specific, a
+# green build here is strong evidence both Windows arches compile.
+#
+# NOTE: this is EXPECTED TO FAIL until the platform seam lands — the editor still
+# uses termios/ioctl//dev/tty unguarded (see PORTING_TO_WINDOWS.md). The job is
+# the harness that turns green as the port is implemented.
+name: windows
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # Matches the toolchain version used by the Linux release build.
+      - uses: compnerd/gha-setup-swift@main
+        with:
+          branch: swift-6.3.2-release
+          tag: 6.3.2-RELEASE
+
+      - name: Swift version
+        run: swift --version
+
+      - name: Build
+        run: swift build
