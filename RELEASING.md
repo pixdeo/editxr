@@ -25,8 +25,10 @@ relies on.
    publish it (`gh release edit vX.Y.Z --draft=false`). The release is kept a
    draft until the macOS zip is present so it never becomes the "latest" that
    `install.sh` reads with the Linux binaries only.
-5. **Homebrew tap:** bump the formula in `pixdeo/homebrew-tap` with the new
-   version and the macOS zip's sha256. This is **not** automated — do it by hand.
+5. **Homebrew tap:** run `scripts/bump-homebrew.sh vX.Y.Z`. It reads the sha256
+   from the local `dist/` zip (or downloads the published asset), rewrites the
+   formula in `pixdeo/homebrew-tap`, and commits + pushes it. Re-running is safe
+   — it's a no-op once the formula is already at that version.
 
 ## Caveats to remember
 
