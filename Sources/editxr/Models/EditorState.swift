@@ -43,7 +43,6 @@ class EditorState {
     var viewMode: ViewMode = .normal
     var focusMode: FocusMode = .off
     var showStatusBar: Bool = true
-    var showHelp: Bool = true
     var showLineNumbers: Bool = false
     var statusBarBig: Bool = true
     var wordWrap: Bool = true
@@ -98,7 +97,6 @@ class EditorState {
         self.syntaxHighlighter = SyntaxRegistry.forFile(filePath)
 
         let config = Config.load()
-        self.showHelp = config.showHelp
         self.wordWrap = config.wordWrap
         self.scrollPastEnd = config.scrollPastEnd ?? true
         self.fullTable = config.fullTable ?? true
@@ -254,11 +252,6 @@ class EditorState {
         saveConfig()
     }
     
-    func toggleHelp() {
-        showHelp.toggle()
-        saveConfig()
-    }
-    
     func toggleWordWrap() {
         wordWrap.toggle()
         scrollX = 0
@@ -351,7 +344,6 @@ class EditorState {
     
     private func saveConfig() {
         var config = Config.load()
-        config.showHelp = showHelp
         config.wordWrap = wordWrap
         config.showLineNumbers = showLineNumbers
         config.statusBarBig = statusBarBig

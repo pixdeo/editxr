@@ -1,7 +1,6 @@
 import Foundation
 
 struct Config: Codable {
-    var showHelp: Bool = true
     var wordWrap: Bool = true
     var renderMarkdown: Bool = true
     // Optional so configs written before this field still decode.

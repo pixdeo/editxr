@@ -85,6 +85,9 @@ class EditorApp {
     /// Transient status-bar toast (e.g. "copied 12 chars") that fades out.
     private var toastText: String?
     private var toastFrame = 0
+    /// Set after a quit attempt with unsaved changes: the next Ctrl+D/Ctrl+Q
+    /// confirms and exits. Any other key clears it (see handleInput).
+    private var pendingQuit = false
     private var toastTimer: DispatchSourceTimer?
     /// Frames at full strength, then frames spent fading to invisible (~0.05s each).
     private let toastHoldFrames = 16
@@ -196,6 +199,66 @@ class EditorApp {
         return cmds
     }
 
+    // MARK: - Keyboard shortcuts help
+
+    /// Toggle the searchable keyboard-shortcuts reference (Ctrl+/). Reuses the
+    /// command palette's panel for free search + scroll; the rows are reference
+    /// only (Enter/Esc just close), so each is built with a no-op action.
+    private func openShortcutsHelp() {
+        guard let panel = commandPanel else { return }
+        if panel.isVisible {
+            panel.hide()
+        } else {
+            panel.setRoot(title: "Keyboard shortcuts") { [weak self] in self?.shortcutsHelpCommands() ?? [] }
+            panel.show()
+        }
+        render()
+    }
+
+    /// A flat, grouped list of every shortcut with a one-line gloss. Titles are
+    /// the descriptions (what search matches); the key combo sits on the right.
+    private func shortcutsHelpCommands() -> [PaletteCommand] {
+        func row(_ title: String, _ shortcut: String) -> PaletteCommand {
+            PaletteCommand(title: title, shortcut: shortcut, action: {})
+        }
+        return [
+            .header("File"),
+            row("Open file", "^O"),
+            row("Save", "^S"),
+            row("Export to HTML", "^E"),
+            row("Follow link under cursor", "^]"),
+            row("Command palette", "^P"),
+            row("Quit", "^Q / ^D"),
+            .spacer, .header("Tabs"),
+            row("Next tab", "^N"),
+            row("Back / previous tab", "esc"),
+            row("Close tab", "^W"),
+            .spacer, .header("Edit"),
+            row("Select all", "^A"),
+            row("Undo", "^U"),
+            row("Redo", "^Y"),
+            row("Copy", "^C"),
+            row("Cut", "^X"),
+            row("Paste", "^V"),
+            row("Delete word back", "^H / ⌥⌫"),
+            row("Cycle task state", "^T"),
+            row("Cycle task / promote heading", "Tab"),
+            row("AI assist", "^Space"),
+            .spacer, .header("Find"),
+            row("Find", "^F"),
+            row("Find next", "^G"),
+            .spacer, .header("View"),
+            row("Toggle raw view", "^R"),
+            row("Toggle line numbers", "^L"),
+            row("Cycle focus mode", "^B"),
+            row("Keyboard shortcuts (this panel)", "^/"),
+            .spacer, .header("Navigate"),
+            row("Move cursor", "← ↑ → ↓"),
+            row("Top / bottom", "Home / End"),
+            row("Page up / down", "PgUp / PgDn"),
+        ]
+    }
+
     // MARK: - Editor settings menu
 
     /// View / layout toggles and editing-pane settings, nested under "Editor".
@@ -205,7 +268,6 @@ class EditorApp {
             toggleCommand("Toggle word wrap", "") { [weak self] in self?.state.toggleWordWrap() },
             toggleCommand("Toggle line numbers", "^L") { [weak self] in self?.state.toggleLineNumbers() },
             toggleCommand("Focus mode (^B)", state.focusMode.label) { [weak self] in self?.state.cycleFocusMode() },
-            toggleCommand("Toggle help bar", "^/") { [weak self] in self?.state.toggleHelp() },
             toggleCommand("Toggle scroll past end", "") { [weak self] in self?.state.toggleScrollPastEnd() },
             toggleCommand("Toggle big status bar", state.statusBarBig ? "big" : "slim") { [weak self] in self?.state.toggleStatusBarBig() },
             toggleCommand("Toggle contextual hints", state.contextHelp ? "on" : "off") { [weak self] in self?.state.toggleContextHelp() },
@@ -465,6 +527,18 @@ class EditorApp {
         let data = FileHandle.standardInput.availableData
         guard let string = String(data: data, encoding: .utf8) else { return }
 
+        // A pending quit (armed by quit() when there are unsaved changes) is
+        // confirmed only by pressing a quit key again; any other key cancels it.
+        if pendingQuit {
+            let isQuitKey = string == String(Key.ctrlD) || string == String(Key.ctrlQ)
+                || (states.count == 1 && string == String(Key.ctrlW))
+            if !isQuitKey {
+                pendingQuit = false
+                toastText = nil
+                stopToastTimer()
+            }
+        }
+
         // The welcome card dismisses as soon as you touch anything.
         if showSplash {
             showSplash = false
@@ -574,6 +648,11 @@ class EditorApp {
                     arrowKeyParser.arrowKey = nil
                     handleArrowKey(key)
                 }
+                if arrowKeyParser.altDelete {
+                    arrowKeyParser.altDelete = false
+                    state.deleteWordBackward()
+                    needsRender = true
+                }
                 continue
             }
 
@@ -593,8 +672,7 @@ class EditorApp {
                 state.deleteWordBackward()
                 needsRender = true
             case Key.ctrlSlash:
-                state.toggleHelp()
-                needsRender = true
+                openShortcutsHelp()
             case Key.ctrlP:
                 toggleCommandPanel()
             case Key.ctrlL:
@@ -1106,8 +1184,6 @@ class EditorApp {
 
         if state.isReviewing {
             lines.append(padToWidth(renderReviewHintBar(width: width), width: width))
-        } else if state.showHelp {
-            lines.append(padToWidth(renderHelpBar(width: width), width: width))
         } else {
             lines.append(padToWidth(renderHintBar(width: width), width: width))
         }
@@ -2877,31 +2953,6 @@ class EditorApp {
         return "\(Theme.statusBarText)\(left)\(spaces)\(right)"
     }
     
-    private func renderHelpBar(width: Int) -> String {
-        let shortcuts: [(key: String, desc: String)] = [
-            ("^/", "help"),
-            ("^P", "commands"),
-            ("^Q", "quit"),
-            ("^S", "save"),
-            ("^R", "raw"),
-            ("^W", "wrap"),
-            ("^L", "lines"),
-            ("^E", "html"),
-            ("^F", "find"),
-            ("^G", "next"),
-            ("^U", "undo"),
-            ("^Y", "redo")
-        ]
-        
-        var parts: [String] = []
-        for shortcut in shortcuts {
-            parts.append("\(Theme.accent)\(shortcut.key) \(Theme.textMuted)\(shortcut.desc)\(Theme.reset)")
-        }
-        
-        let content = parts.joined(separator: "  ")
-        return content
-    }
-
     private func renderHintBar(width: Int) -> String {
         // Left: the AI provider (and model, if set). Right: command/help shortcuts,
         // right-aligned with one column of padding from the edge.
@@ -3191,6 +3242,13 @@ class EditorApp {
     }
 
     private func quit() {
+        // Guard against losing work: if any tab has unsaved changes, the first
+        // quit attempt only arms pendingQuit and warns; a second one confirms.
+        if !pendingQuit && states.contains(where: { $0.isDirty }) {
+            pendingQuit = true
+            showToast("Unsaved changes — Ctrl+D again to quit")
+            return
+        }
         states.forEach { $0.persistCursorPosition() }
         showCursor()
         exitAlternateScreen()
@@ -3213,6 +3271,9 @@ enum ArrowKey {
 
 class ArrowKeyParser {
     var arrowKey: ArrowKey?
+    /// Set when ESC is followed by DEL/BS — i.e. Option+Delete (⌥⌫), which Macs
+    /// send as ESC + 0x7F. Surfaced like arrowKey and consumed by the input loop.
+    var altDelete = false
     private var state: State = .initial
     private var buffer: [Character] = []
     
@@ -3245,6 +3306,12 @@ class ArrowKeyParser {
             }
             if character == "O" {
                 state = .ss3
+                return true
+            }
+            // ESC + DEL (0x7F) / BS (0x08) == Option+Delete: delete the word back.
+            if character == "\u{7F}" || character == "\u{08}" {
+                altDelete = true
+                state = .initial
                 return true
             }
             state = .initial

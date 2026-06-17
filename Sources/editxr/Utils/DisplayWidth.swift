@@ -11,9 +11,12 @@ func displayWidth(_ char: Character) -> Int {
     if (0x0300...0x036F).contains(v) || v == 0x200D || (0xFE00...0xFE0F).contains(v) {
         return 0
     }
-    // Wide ranges (CJK, Hangul, fullwidth, emoji blocks)
+    // Wide ranges (CJK, Hangul, fullwidth, emoji blocks). The Miscellaneous
+    // Technical block (0x2300–0x23FF) is deliberately excluded: most of it is
+    // ambiguous-width (narrow by default in terminals like Terminal.app), e.g.
+    // ⌥ (U+2325) and ⌫ (U+232B); the genuinely-wide emoji in it (⌚ ⌛ ⏰ …) are
+    // still caught by the isEmojiPresentation check below.
     if (0x1100...0x115F).contains(v) ||
-       (0x2300...0x23FF).contains(v) ||
        (0x2600...0x27BF).contains(v) ||
        (0x2E80...0xA4CF).contains(v) ||
        (0xAC00...0xD7A3).contains(v) ||

@@ -167,8 +167,8 @@ other LLM providers work as usual.
 | `Ctrl+G` | Find next match |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste (system clipboard) |
 | `Ctrl+U` / `Ctrl+Y` | Undo / Redo |
-| `Ctrl+H` | Delete word backward |
-| `Ctrl+/` | Toggle help bar |
+| `Ctrl+H` / `⌥⌫` | Delete word backward |
+| `Ctrl+/` | Keyboard shortcuts (searchable panel) |
 | Arrows / Shift+Arrows | Move / select |
 | Mouse | Wheel scrolls; click places the cursor (or follows a link); drag selects |
 | `Ctrl+←/→` | Move by word |

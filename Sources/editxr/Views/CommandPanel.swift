@@ -444,8 +444,10 @@ final class CommandPanel {
         let trailing = max(0, contentWidth - innerVisible)
         let padded = innerStyled + String(repeating: " ", count: trailing)
         let pad = String(repeating: " ", count: padX)
-        // │ + bg(pad + content + pad) + │  — borders in the accent colour.
-        return "\(Theme.accent)│\(bg)\(pad)\(padded)\(pad)\(Theme.accent)│\(Theme.reset)"
+        // │ + bg(pad + content + pad) + │  — borders in the accent colour. Reset
+        // to the panel bg before the right border so a selected row's highlight
+        // stops at the inner edge instead of bleeding over the vertical border.
+        return "\(Theme.accent)│\(bg)\(pad)\(padded)\(pad)\(Theme.statusBarBg)\(Theme.accent)│\(Theme.reset)"
     }
 
     private func blankRow(boxWidth: Int) -> String {
