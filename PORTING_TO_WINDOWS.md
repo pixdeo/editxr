@@ -80,16 +80,21 @@ symbols directly.
 
 ## Work items (core: editing works)
 
-- [ ] Add `Sources/editxr/Platform/PlatformTerminal.swift` with POSIX + Windows
+- [x] Add `Sources/editxr/Platform/PlatformTerminal.swift` with POSIX + Windows
       backends (raw mode, size, input loop, resize watch).
-- [ ] Route `EditorApp.swift` `setInputMode`/`resetInputMode`/`getTerminalSize`
+- [x] Route `EditorApp.swift` `setInputMode`/`resetInputMode`/`getTerminalSize`
       and the `start()` input/resize setup through the platform layer.
-- [ ] Guard `Theme.swift` terminal-background query with `#if !os(Windows)`;
+- [x] Guard `Theme.swift` terminal-background query with `#if os(Windows)`;
       fall back to `COLORFGBG`/dark on Windows.
 - [ ] Fix `SystemClipboard.swift` PATH separator per-OS and add `clip.exe` /
       `Get-Clipboard` tools (cheap win; otherwise the in-memory buffer is the
-      backstop).
-- [ ] Confirm macOS/Linux builds are unchanged (`swift build` on this machine).
+      backstop). *Not a compile blocker — the Windows build is already green
+      without it.*
+- [x] Confirm the build is unchanged — the Linux (POSIX) CI build stays green;
+      the POSIX code is moved byte-for-byte behind the seam. (Local `swift build`
+      on the dev Mac is currently blocked by an unrelated SDK/toolchain issue —
+      `could not build Objective-C module 'Darwin'` — so CI is the source of
+      truth for both paths.)
 
 ### Out of scope for now
 
@@ -120,4 +125,11 @@ stays intact; the Windows path is verified later via CI or the VM.
 
 ## Status
 
-Planning complete. Implementation not started.
+**Core compile deliverable done.** The platform seam
+(`Sources/editxr/Platform/PlatformTerminal.swift`) is in place and editxr now
+compiles on Windows x86_64 (`windows-latest` CI, `.github/workflows/windows.yml`)
+and still on Linux (the POSIX path is unchanged). A Windows 11 ARM QEMU VM exists
+on the dev machine for the remaining hands-on UX pass (raw mode, rendering, resize
+by hand). Runtime not yet exercised on Windows.
+
+Remaining: SystemClipboard per-OS PATH/tools, and on-device UX verification.
