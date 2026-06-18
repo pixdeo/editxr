@@ -1,23 +1,32 @@
-# Windows compile signal. The windows-latest runner is x86_64, so this builds
-# the Intel/AMD64 target natively — the direct answer to "does editxr compile on
-# Windows?". The ARM64 path is exercised separately (local QEMU VM); since the
-# `#if os(Windows)` code is OS-level (Win32 console API), not arch-specific, a
-# green build here is strong evidence both Windows arches compile.
+# Windows build: compile signal on every push/PR, and on a tag it packages a
+# self-contained zip (editxr.exe + the Swift Windows runtime DLLs) for each
+# architecture and attaches them to that tag's draft GitHub release.
 #
-# NOTE: this is EXPECTED TO FAIL until the platform seam lands — the editor still
-# uses termios/ioctl//dev/tty unguarded (see PORTING_TO_WINDOWS.md). The job is
-# the harness that turns green as the port is implemented.
+#   x64   -> windows-latest   (Intel/AMD; also runs on Windows ARM via Prism)
+#   arm64 -> windows-11-arm   (native Windows on ARM)
+#
+# Since the `#if os(Windows)` code is OS-level (Win32 console API), not
+# arch-specific, a green build here covers both Windows architectures.
 name: windows
 
 on:
   push:
+    tags: ['v*']
     branches: [main]
   pull_request:
   workflow_dispatch:
 
 jobs:
   windows:
-    runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { runner: windows-latest, arch: x64 }
+          - { runner: windows-11-arm, arch: arm64 }
+    runs-on: ${{ matrix.runner }}
+    permissions:
+      contents: write
     steps:
       - uses: actions/checkout@v4
 
@@ -30,25 +39,44 @@ jobs:
       - name: Swift version
         run: swift --version
 
+      - name: Resolve version
+        id: ver
+        shell: bash
+        run: |
+          if [[ "${{ github.ref }}" == refs/tags/* ]]; then
+            echo "version=${{ github.ref_name }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "version=dev-${GITHUB_SHA::7}" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Build (release)
         run: swift build -c release
 
-      # Bundle the exe with the Swift Windows runtime DLLs so it runs on a
-      # machine without the toolchain (e.g. a Windows 11 ARM VM, via Prism).
-      - name: Bundle editxr + runtime DLLs
+      # Self-contained bundle: the exe + the Swift Windows runtime DLLs (gathered
+      # from the toolchain's runtime dir) so it runs on a stock Windows machine.
+      - name: Package
         shell: pwsh
         run: |
-          New-Item -ItemType Directory -Force dist | Out-Null
-          Copy-Item .build\release\editxr.exe dist\
+          $name = "editxr-${{ steps.ver.outputs.version }}-windows-${{ matrix.arch }}"
+          New-Item -ItemType Directory -Force $name | Out-Null
+          Copy-Item .build\release\editxr.exe $name\
           $core = where.exe swiftCore.dll 2>$null | Select-Object -First 1
           if (-not $core) { throw "swiftCore.dll not found on PATH" }
-          $rt = Split-Path $core
-          Write-Host "Swift runtime dir: $rt"
-          Copy-Item "$rt\*.dll" dist\ -Force
-          Get-ChildItem dist | Sort-Object Length -Descending | Select-Object Name,Length | Format-Table -AutoSize
+          Write-Host "Swift runtime dir: $(Split-Path $core)"
+          Copy-Item "$(Split-Path $core)\*.dll" $name\ -Force
+          Compress-Archive -Path $name -DestinationPath "$name.zip" -Force
+          Get-ChildItem "$name.zip" | Format-Table Name,Length -AutoSize
 
-      - name: Upload editxr bundle
+      - name: Upload workflow artifact (for testing)
         uses: actions/upload-artifact@v4
         with:
-          name: editxr-windows-x64
-          path: dist/*
+          name: editxr-windows-${{ matrix.arch }}
+          path: editxr-*-windows-${{ matrix.arch }}.zip
+
+      - name: Attach to draft release
+        if: startsWith(github.ref, 'refs/tags/')
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.ref_name }}
+          draft: true
+          files: editxr-*-windows-${{ matrix.arch }}.zip
