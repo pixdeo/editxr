@@ -30,5 +30,25 @@ jobs:
       - name: Swift version
         run: swift --version
 
-      - name: Build
-        run: swift build
+      - name: Build (release)
+        run: swift build -c release
+
+      # Bundle the exe with the Swift Windows runtime DLLs so it runs on a
+      # machine without the toolchain (e.g. a Windows 11 ARM VM, via Prism).
+      - name: Bundle editxr + runtime DLLs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item .build\release\editxr.exe dist\
+          $core = where.exe swiftCore.dll 2>$null | Select-Object -First 1
+          if (-not $core) { throw "swiftCore.dll not found on PATH" }
+          $rt = Split-Path $core
+          Write-Host "Swift runtime dir: $rt"
+          Copy-Item "$rt\*.dll" dist\ -Force
+          Get-ChildItem dist | Sort-Object Length -Descending | Select-Object Name,Length | Format-Table -AutoSize
+
+      - name: Upload editxr bundle
+        uses: actions/upload-artifact@v4
+        with:
+          name: editxr-windows-x64
+          path: dist/*
