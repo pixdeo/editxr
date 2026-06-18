@@ -127,10 +127,12 @@ stays intact; the Windows path is verified later via CI or the VM.
 
 **Working on Windows.** The platform seam
 (`Sources/editxr/Platform/PlatformTerminal.swift`) is in place; editxr compiles on
-Windows (x64 + arm64) and Linux, and has been **run on a Windows 11 ARM VM** (x64
-build via Prism): splash, raw mode, VT rendering, keyboard input and quit all
-work. `.github/workflows/windows.yml` builds both architectures and, on a tag,
-attaches self-contained zips (exe + Swift runtime DLLs) to the release.
+Windows (x64) and Linux, and has been **run on a Windows 11 ARM VM** (the x64
+build via the OS's Prism emulation): splash, raw mode, VT rendering, keyboard
+input and quit all work. `.github/workflows/windows.yml` builds x64 and, on a
+tag, attaches a self-contained zip (exe + Swift runtime DLLs) to the release —
+that one binary serves both Intel/AMD and Windows-on-ARM.
 
 Remaining: SystemClipboard per-OS PATH/tools (in-memory buffer is the backstop
-until then); native arm64 runtime spot-check (x64-via-Prism is verified).
+until then). A *native* arm64 build is deferred — no Swift arm64 Windows
+toolchain on hosted CI yet; the x64 build already runs on ARM via Prism.

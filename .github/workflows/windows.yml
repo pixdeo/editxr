@@ -1,12 +1,13 @@
 # Windows build: compile signal on every push/PR, and on a tag it packages a
-# self-contained zip (editxr.exe + the Swift Windows runtime DLLs) for each
-# architecture and attaches them to that tag's draft GitHub release.
+# self-contained zip (editxr.exe + the Swift Windows runtime DLLs) and attaches
+# it to that tag's draft GitHub release.
 #
-#   x64   -> windows-latest   (Intel/AMD; also runs on Windows ARM via Prism)
-#   arm64 -> windows-11-arm   (native Windows on ARM)
-#
-# Since the `#if os(Windows)` code is OS-level (Win32 console API), not
-# arch-specific, a green build here covers both Windows architectures.
+# x64 only. The x86_64 build runs on Intel/AMD *and* on Windows on ARM via the
+# OS's built-in x64 emulation (Prism) — verified by hand on a Windows 11 ARM VM.
+# A native arm64 build isn't produced yet: there's no Swift arm64 Windows
+# toolchain on GitHub's hosted `windows-11-arm` runners (the setup action falls
+# back to the x64 toolchain, which crashes on the ARM host). Revisit when an
+# arm64 toolchain ships.
 name: windows
 
 on:
@@ -18,13 +19,7 @@ on:
 
 jobs:
   windows:
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - { runner: windows-latest, arch: x64 }
-          - { runner: windows-11-arm, arch: arm64 }
-    runs-on: ${{ matrix.runner }}
+    runs-on: windows-latest
     permissions:
       contents: write
     steps:
@@ -57,7 +52,7 @@ jobs:
       - name: Package
         shell: pwsh
         run: |
-          $name = "editxr-${{ steps.ver.outputs.version }}-windows-${{ matrix.arch }}"
+          $name = "editxr-${{ steps.ver.outputs.version }}-windows-x64"
           New-Item -ItemType Directory -Force $name | Out-Null
           Copy-Item .build\release\editxr.exe $name\
           $core = where.exe swiftCore.dll 2>$null | Select-Object -First 1
@@ -70,8 +65,8 @@ jobs:
       - name: Upload workflow artifact (for testing)
         uses: actions/upload-artifact@v4
         with:
-          name: editxr-windows-${{ matrix.arch }}
-          path: editxr-*-windows-${{ matrix.arch }}.zip
+          name: editxr-windows-x64
+          path: editxr-*-windows-x64.zip
 
       - name: Attach to draft release
         if: startsWith(github.ref, 'refs/tags/')
@@ -79,4 +74,4 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           draft: true
-          files: editxr-*-windows-${{ matrix.arch }}.zip
+          files: editxr-*-windows-x64.zip
