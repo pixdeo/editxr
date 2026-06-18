@@ -80,16 +80,21 @@ symbols directly.
 
 ## Work items (core: editing works)
 
-- [ ] Add `Sources/editxr/Platform/PlatformTerminal.swift` with POSIX + Windows
+- [x] Add `Sources/editxr/Platform/PlatformTerminal.swift` with POSIX + Windows
       backends (raw mode, size, input loop, resize watch).
-- [ ] Route `EditorApp.swift` `setInputMode`/`resetInputMode`/`getTerminalSize`
+- [x] Route `EditorApp.swift` `setInputMode`/`resetInputMode`/`getTerminalSize`
       and the `start()` input/resize setup through the platform layer.
-- [ ] Guard `Theme.swift` terminal-background query with `#if !os(Windows)`;
+- [x] Guard `Theme.swift` terminal-background query with `#if os(Windows)`;
       fall back to `COLORFGBG`/dark on Windows.
 - [ ] Fix `SystemClipboard.swift` PATH separator per-OS and add `clip.exe` /
       `Get-Clipboard` tools (cheap win; otherwise the in-memory buffer is the
-      backstop).
-- [ ] Confirm macOS/Linux builds are unchanged (`swift build` on this machine).
+      backstop). *Not a compile blocker — the Windows build is already green
+      without it.*
+- [x] Confirm the build is unchanged — the Linux (POSIX) CI build stays green;
+      the POSIX code is moved byte-for-byte behind the seam. (Local `swift build`
+      on the dev Mac is currently blocked by an unrelated SDK/toolchain issue —
+      `could not build Objective-C module 'Darwin'` — so CI is the source of
+      truth for both paths.)
 
 ### Out of scope for now
 
@@ -120,4 +125,14 @@ stays intact; the Windows path is verified later via CI or the VM.
 
 ## Status
 
-Planning complete. Implementation not started.
+**Working on Windows.** The platform seam
+(`Sources/editxr/Platform/PlatformTerminal.swift`) is in place; editxr compiles on
+Windows (x64) and Linux, and has been **run on a Windows 11 ARM VM** (the x64
+build via the OS's Prism emulation): splash, raw mode, VT rendering, keyboard
+input and quit all work. `.github/workflows/windows.yml` builds x64 and, on a
+tag, attaches a self-contained zip (exe + Swift runtime DLLs) to the release —
+that one binary serves both Intel/AMD and Windows-on-ARM.
+
+Remaining: SystemClipboard per-OS PATH/tools (in-memory buffer is the backstop
+until then). A *native* arm64 build is deferred — no Swift arm64 Windows
+toolchain on hosted CI yet; the x64 build already runs on ARM via Prism.
