@@ -64,7 +64,8 @@ class EditorApp {
     /// Scanned file list for the quick-switcher, cached for the lifetime of one
     /// panel session so searching doesn't re-walk the directory per keystroke.
     private var fileCommandCache: [PaletteCommand]?
-    private var stdInSource: DispatchSourceRead?
+    private var inputLoop: AnyObject?
+    private var resizeWatch: AnyObject?
     private var arrowKeyParser = ArrowKeyParser()
     private let llmService = LLMService()
     private var llmModal: LLMModal?
@@ -375,22 +376,16 @@ class EditorApp {
         setInputMode()
         enterAlternateScreen()
         
-        let stdInSource = DispatchSource.makeReadSource(fileDescriptor: STDIN_FILENO, queue: .main)
-        stdInSource.setEventHandler { [weak self] in
-            self?.handleInput()
+        inputLoop = PlatformTerminal.startInputLoop { [weak self] data in
+            self?.handleInput(data)
         }
-        stdInSource.resume()
-        self.stdInSource = stdInSource
-        
-        signal(SIGINT, SIG_IGN)
-        signal(SIGTSTP, SIG_IGN)
-        
-        let sigWinChSource = DispatchSource.makeSignalSource(signal: SIGWINCH, queue: .main)
-        sigWinChSource.setEventHandler { [weak self] in
+
+        PlatformTerminal.ignoreSuspendSignals()
+
+        resizeWatch = PlatformTerminal.startResizeWatch { [weak self] in
             self?.render()
         }
-        sigWinChSource.resume()
-        
+
         hideCursor()
         render()
         if showSplash { startSplashTimer() }
@@ -509,22 +504,14 @@ class EditorApp {
     }
     
     private func setInputMode() {
-        var tattr = termios()
-        tcgetattr(STDIN_FILENO, &tattr)
-        tattr.c_lflag &= ~tcflag_t(ECHO | ICANON | ISIG | IEXTEN)
-        tattr.c_iflag &= ~tcflag_t(IXON | IXOFF | ICRNL | INLCR | IGNCR)
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &tattr)
+        PlatformTerminal.enableRawMode()
     }
-    
+
     private func resetInputMode() {
-        var tattr = termios()
-        tcgetattr(STDIN_FILENO, &tattr)
-        tattr.c_lflag |= tcflag_t(ECHO | ICANON)
-        tcsetattr(STDIN_FILENO, TCSAFLUSH, &tattr)
+        PlatformTerminal.disableRawMode()
     }
-    
-    private func handleInput() {
-        let data = FileHandle.standardInput.availableData
+
+    private func handleInput(_ data: Data) {
         guard let string = String(data: data, encoding: .utf8) else { return }
 
         // A pending quit (armed by quit() when there are unsaved changes) is
@@ -973,11 +960,7 @@ class EditorApp {
     }
     
     private func getTerminalSize() -> (width: Int, height: Int) {
-        var size = winsize()
-        if ioctl(STDOUT_FILENO, UInt(TIOCGWINSZ), &size) == 0 {
-            return (Int(size.ws_col), Int(size.ws_row))
-        }
-        return (80, 24)
+        PlatformTerminal.terminalSize()
     }
     
     private func gutterWidth() -> Int {

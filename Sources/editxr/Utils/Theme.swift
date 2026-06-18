@@ -26,6 +26,11 @@ enum ColorMode {
     }
 
     private static func queryTerminalBackground() -> (r: Int, g: Int, b: Int)? {
+#if os(Windows)
+        // No /dev/tty + termios on Windows; skip the OSC 11 probe and let
+        // detect() fall back to COLORFGBG / dark. (see PORTING_TO_WINDOWS.md)
+        return nil
+#else
         let tty = FileHandle(forReadingAtPath: "/dev/tty")
         let ttyOut = FileHandle(forWritingAtPath: "/dev/tty")
         guard let tty = tty, let ttyOut = ttyOut else { return nil }
@@ -78,6 +83,7 @@ enum ColorMode {
         }
 
         return (r, g, b)
+#endif
     }
 }
 
