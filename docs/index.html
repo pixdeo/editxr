@@ -4,18 +4,18 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
 <title>editxr — a WYSIWYG Markdown editor for the terminal</title>
-<meta name="description" content="Render Markdown live as you type, edit sections with reviewable AI diffs, and never leave your shell. Native Swift, zero dependencies, macOS & Linux. Open source.">
+<meta name="description" content="Render Markdown live as you type, edit sections with reviewable AI diffs, and never leave your shell. Native Swift, zero dependencies, macOS, Linux & Windows. Open source.">
 <link rel="icon" href="editxr.png">
 
 <!-- Social cards -->
 <meta property="og:type" content="website">
 <meta property="og:title" content="editxr — a WYSIWYG Markdown editor for the terminal">
-<meta property="og:description" content="Markdown rendered as you type, AI edits you review as inline diffs, zero dependencies. macOS & Linux. Open source.">
+<meta property="og:description" content="Markdown rendered as you type, AI edits you review as inline diffs, zero dependencies. macOS, Linux & Windows. Open source.">
 <meta property="og:url" content="https://editxr.org">
 <meta property="og:image" content="https://editxr.org/editxr.png">
 <meta name="twitter:card" content="summary_large_image">
 <meta name="twitter:title" content="editxr — a WYSIWYG Markdown editor for the terminal">
-<meta name="twitter:description" content="Markdown rendered as you type, AI edits you review as inline diffs, zero dependencies. macOS & Linux. Open source.">
+<meta name="twitter:description" content="Markdown rendered as you type, AI edits you review as inline diffs, zero dependencies. macOS, Linux & Windows. Open source.">
 <meta name="twitter:image" content="https://editxr.org/editxr.png">
 <link rel="alternate" type="text/markdown" href="/llms.txt" title="llms.txt">
 
@@ -26,7 +26,7 @@
   "@type": "SoftwareApplication",
   "name": "editxr",
   "applicationCategory": "DeveloperApplication",
-  "operatingSystem": "macOS, Linux",
+  "operatingSystem": "macOS, Linux, Windows",
   "description": "A WYSIWYG Markdown editor for the terminal. It renders Markdown live as you type and edits whole sections with an LLM, shown as an inline diff you accept or reject. Native Swift, zero dependencies. Open source (MIT).",
   "url": "https://editxr.org",
   "downloadUrl": "https://github.com/pixdeo/editxr",
@@ -150,7 +150,7 @@
 <header class="hero">
   <div class="wrap">
     <img src="editxr.png" alt="editxr">
-    <p class="tagline">A <b>WYSIWYG</b> Markdown editor for the terminal.<br/>100% <b>Swift</b>, zero dependencies. <b>macOS &amp; Linux.</b> <br/>AI Assistant integrated. Use any LLM you like.</p>
+    <p class="tagline">A <b>WYSIWYG</b> Markdown editor for the terminal.<br/>100% <b>Swift</b>, zero dependencies. <b>macOS, Linux &amp; Windows.</b> <br/>AI Assistant integrated. Use any LLM you like.</p>
 
     <div class="cmd">
       <code id="cmd"><span class="p">curl</span> -fsSL https://raw.githubusercontent.com/pixdeo/editxr/main/install.sh | <span class="p">bash</span></code>
@@ -192,6 +192,10 @@
         <p>Select a section, describe the change, and accept or reject it as a red/green inline diff. No chat thread, nothing lands unapproved.</p>
       </div>
       <div class="feature">
+        <h3>Linked, like Obsidian</h3>
+        <p>[[wikilinks]] and [](file.md) links render collapsed and open in a tab on Ctrl+]. Fuzzy-find any file with Ctrl+O, cycle tabs, jump back with Ctrl+[ — a whole notes folder, navigable without leaving the shell.</p>
+      </div>
+      <div class="feature">
         <h3>Bring your own model</h3>
         <p>LM Studio (local), OpenAI, OpenRouter, or an offline mock that needs no backend at all.</p>
       </div>
@@ -201,7 +205,7 @@
       </div>
       <div class="feature">
         <h3>Fast &amp; dependency-free</h3>
-        <p>A native Swift binary. It opens instantly and stays fast on large files. macOS &amp; Linux.</p>
+        <p>A native Swift binary. It opens instantly and stays fast on large files. macOS, Linux &amp; Windows.</p>
       </div>
       <div class="feature">
         <h3>Everything else</h3>
@@ -247,6 +251,11 @@
         <td>Linux · aarch64</td>
         <td><code>editxr-&lt;version&gt;-linux-aarch64.tar.gz</code>
           <span class="note">Static (musl) — runs on any distro, no Swift runtime needed.</span></td>
+      </tr>
+      <tr>
+        <td>Windows · x64</td>
+        <td><code>editxr-&lt;version&gt;-windows-x64.zip</code>
+          <span class="note">Self-contained (exe + Swift runtime). Runs on Intel/AMD and on Windows on ARM via emulation. Best in Windows Terminal.</span></td>
       </tr>
     </table>
   </div>
