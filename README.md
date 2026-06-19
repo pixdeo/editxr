@@ -34,6 +34,10 @@ This is a **test** with *markdown*.
 
 ![AI section editing](demo/ai.gif)
 
+**Linked, like Obsidian.** Follow `[[wikilinks]]` and `[](file.md)` across notes — `Ctrl+]` to open, `Ctrl+[` to go back, `Ctrl+O` to jump to any file.
+
+![Navigable links](demo/links.gif)
+
 **Themes.** Light or dark, from the command palette.
 
 ![Themes](demo/themes.gif)

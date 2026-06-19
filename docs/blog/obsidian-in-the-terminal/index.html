@@ -1,0 +1,193 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>A terminal Markdown editor that links like Obsidian — editxr</title>
+<meta name="description" content="Obsidian-style links in a terminal Markdown editor: [[wikilinks]], quick-open, and following links between notes without leaving your shell. Now on macOS, Linux and Windows.">
+<link rel="icon" href="/editxr.png">
+<link rel="canonical" href="https://editxr.org/blog/obsidian-in-the-terminal/">
+
+<!-- Social cards -->
+<meta property="og:type" content="article">
+<meta property="og:title" content="A terminal Markdown editor that links like Obsidian">
+<meta property="og:description" content="Obsidian-style links in a terminal Markdown editor: [[wikilinks]], quick-open, and following links between notes without leaving your shell.">
+<meta property="og:url" content="https://editxr.org/blog/obsidian-in-the-terminal/">
+<meta property="og:image" content="https://editxr.org/editxr.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="A terminal Markdown editor that links like Obsidian">
+<meta name="twitter:description" content="Obsidian-style links in a terminal Markdown editor: wikilinks, quick-open, and following links between notes — without leaving your shell.">
+<meta name="twitter:image" content="https://editxr.org/editxr.png">
+
+<!-- Structured data -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "A terminal Markdown editor that links like Obsidian",
+  "description": "Obsidian-style links in a terminal Markdown editor: wikilinks, quick-open, and following links between notes without leaving your shell.",
+  "datePublished": "2026-06-19",
+  "author": { "@type": "Person", "name": "Martín Romañuk" },
+  "publisher": { "@type": "Organization", "name": "Pixdeo LTD" },
+  "mainEntityOfPage": "https://editxr.org/blog/obsidian-in-the-terminal/",
+  "url": "https://editxr.org/blog/obsidian-in-the-terminal/",
+  "image": "https://editxr.org/editxr.png",
+  "about": { "@type": "SoftwareApplication", "name": "editxr", "url": "https://editxr.org" }
+}
+</script>
+
+<style>
+  :root {
+    --bg: #1c1a18;
+    --surface: #262320;
+    --border: #3a352f;
+    --text: #ebe5db;
+    --muted: #8a8379;
+    --accent: #cc785c;
+    --accent-soft: rgba(204, 120, 92, 0.14);
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--mono); line-height: 1.7; -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 1.25rem; }
+
+  /* Top bar */
+  .nav { border-bottom: 1px solid var(--border); }
+  .nav .wrap { display: flex; align-items: center; justify-content: space-between; padding: 1rem 1.25rem; }
+  .nav .brand { display: flex; align-items: center; gap: .5rem; color: var(--text); font-weight: 600; }
+  .nav .brand img { width: 22px; height: 22px; }
+  .nav .links a { color: var(--muted); margin-left: 1.1rem; font-size: .9rem; }
+  .nav .links a:hover { color: var(--accent); }
+
+  /* Article */
+  article { padding: 3.5rem 0 1rem; }
+  .eyebrow { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; margin: 0 0 .75rem; }
+  article h1 { font-size: 2rem; line-height: 1.25; margin: 0 0 .6rem; }
+  article h2 { font-size: 1.3rem; margin: 2.5rem 0 1rem; }
+  .byline { color: var(--muted); font-size: .85rem; margin: 0 0 2.25rem; }
+  .lead { font-size: 1.1rem; color: var(--text); }
+  article p { margin: 0 0 1.25rem; }
+  article code { color: var(--accent); background: var(--accent-soft); padding: .1em .4em; border-radius: 4px; font-size: .9em; }
+
+  /* Inline demo clip */
+  figure.clip { margin: 1.75rem 0 .5rem; text-align: center; }
+  figure.clip video { width: 100%; max-width: 520px; border: 1px solid var(--border); border-radius: 10px; display: block; margin: 0 auto; }
+  figure.clip figcaption { color: var(--muted); font-size: .85rem; margin-top: .5rem; }
+
+  /* CTA */
+  .cta { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem 1.4rem; margin: 2.5rem 0 1rem; }
+  .cta p { margin: 0 0 1rem; color: var(--muted); }
+  .cta pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: .7rem .9rem; overflow-x: auto; color: var(--text); font-size: .88rem; margin: 0 0 1rem; }
+  .cta .btn { display: inline-block; padding: .5rem 1rem; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); font-size: .9rem; }
+  .cta .btn:hover { text-decoration: none; }
+
+  footer { border-top: 1px solid var(--border); padding: 2.5rem 0 3rem; text-align: center; color: var(--muted); font-size: .85rem; margin-top: 2rem; }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--accent); }
+</style>
+
+<!-- Analytics (self-hosted Umami) -->
+<script defer src="https://umami-analytics.lun.pixdeo.com/script.js" data-website-id="ce97f591-2321-44a6-a897-15847c6dd3bc"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/bird.png" alt="">editxr</a>
+    <div class="links">
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/pixdeo/editxr">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<article>
+  <div class="wrap">
+    <p class="eyebrow">Blog</p>
+    <h1>A terminal Markdown editor that links like Obsidian</h1>
+    <p class="byline">By Martín Romañuk · June 19, 2026</p>
+
+    <p class="lead">I keep my notes as a folder of Markdown files. They started as
+    <code>.txt</code>, and at some point became <code>.md</code> — text in a directory I can
+    grep, diff, and sync however I want. The format is rich enough to be useful and plain
+    enough to outlive any app I open it with. I like that a lot. Most of my notes link to each
+    other: less a tree, more a graph.</p>
+
+    <p>I went from Simplenote to a couple of others, then Bear, and now Obsidian, which is
+    good. But I'm often in the terminal, and when I'm there I want to read or edit a note
+    without switching to a GUI. editxr was already sitting in my shell, so I started using it
+    on my own notes.</p>
+
+    <p>That's when it started pulling on threads. I'd be in one note and want to follow a link
+    to another — but editxr could only open a single file at a time. So we added multi-file
+    editing: open several at once in tabs.</p>
+
+    <p>One thing wanted the next. Tabs wanted a way to see the files, so there's a sidebar for
+    the local directory now. It's new and still rough on big Markdown folders, but it's in. We
+    wanted a way to jump around the way everyone expects, so <code>Ctrl+O</code> opens a quick
+    switcher that takes you to any file in the tree; it opens in a new tab, <code>Ctrl+N</code>
+    cycles tabs, <code>Ctrl+W</code> closes one. And if you land on a link, you can follow it.
+    By the time all of that shipped there were enough new commands that we added a palette:
+    <code>Ctrl+/</code> shows everything you can do.</p>
+
+    <h2>Links that stay out of the way</h2>
+
+    <p>A link in editxr renders <strong>collapsed</strong> to its title. <code>[[architecture]]</code>
+    shows as an underlined word, not raw brackets; <code>[the spec](notes/spec.md)</code> shows
+    as "the spec." Press <code>Ctrl+]</code> (or click) and it opens — a local <code>.md</code>
+    file in a new tab, an <code>http(s)</code>/<code>mailto</code> link in your browser.
+    <code>Ctrl+[</code> jumps back to where you came from, so following a link and returning is
+    two keystrokes.</p>
+
+    <p>Move the cursor onto a link and it expands back to raw Markdown. Move off and it
+    collapses again. Nothing is hidden, and nothing is a special "link object" — it's plain
+    Markdown that happens to render nicely. Both styles work: standard
+    <code>[text](file.md)</code> and Obsidian-style <code>[[wikilinks]]</code>.</p>
+
+    <figure class="clip">
+      <video src="/links.mp4" autoplay loop muted playsinline preload="metadata"></video>
+      <figcaption>Following a <code>[[wikilink]]</code> to another note, then <code>Ctrl+[</code> back.</figcaption>
+    </figure>
+
+    <h2>No vault, just the directory you're in</h2>
+
+    <p>There's no "vault" concept for now. editxr opens the directory you're in, every time,
+    and your notes stay plain files — no proprietary format, nothing to import or export. It's
+    a lens over a folder, not a place your notes get trapped.</p>
+
+    <p>That's the line I'm holding for now. If the project takes off, I'd like the community's
+    take on where it should go from here.</p>
+
+    <h2>It runs where you do</h2>
+
+    <p>This linking shipped a while back; what's new is <em>where</em>. As of v1.4.0, editxr
+    runs on Windows too, alongside macOS and Linux. The terminal editing, the live rendering,
+    the linking: the same on all three. (The Windows build is x64 and also runs on Windows on
+    ARM via the OS's emulation.)</p>
+
+    <div class="cta">
+      <p>Try it — point it at a folder of notes and hit <code>Ctrl+O</code>.</p>
+      <pre>brew install pixdeo/tap/editxr</pre>
+      <a class="btn" href="https://github.com/pixdeo/editxr">View on GitHub</a>
+    </div>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap">
+    <a href="/">Home</a> ·
+    <a href="/blog/">Blog</a> ·
+    <a href="https://github.com/pixdeo/editxr">GitHub</a> ·
+    <a href="https://github.com/pixdeo/editxr/blob/main/LICENSE">MIT</a> ·
+    © 2026 Pixdeo LTD
+  </div>
+</footer>
+
+</body>
+</html>
