@@ -3,7 +3,7 @@
 </p>
 
 <p align="center">
-  A WYSIWYG Markdown editor for the terminal. AI-assisted, 100% Swift, zero dependencies. macOS &amp; Linux.
+  A WYSIWYG Markdown editor for the terminal. AI-assisted, 100% Swift, zero dependencies. macOS, Linux &amp; Windows.
 </p>
 
 It renders Markdown live as you type: headings, lists, tables, and code are
@@ -119,10 +119,15 @@ Prebuilt binaries are attached to every
 | macOS (Apple Silicon + Intel) | `editxr-<version>-macos-universal.zip` — signed & notarised universal binary |
 | Linux x86_64 | `editxr-<version>-linux-x86_64.tar.gz` — static (musl), no dependencies |
 | Linux aarch64 | `editxr-<version>-linux-aarch64.tar.gz` — static (musl), no dependencies |
+| Windows x64 | `editxr-<version>-windows-x64.zip` — self-contained (exe + Swift runtime DLLs) |
 
 The Linux binaries are statically linked against musl, so a single download runs
 on any distro (Ubuntu, Debian, Alpine, Fedora, …) with no Swift runtime
 installed. To build from source instead, pass `FROM_SOURCE=1` to the installer.
+
+On Windows, unzip and run `editxr.exe` (best in Windows Terminal). The x64 build
+also runs on Windows on ARM via the OS's built-in x64 emulation. Clipboard, theme
+auto-detection and OpenAI OAuth sign-in fall back gracefully there for now.
 
 ## Build & run
 
@@ -143,8 +148,9 @@ fails to compile (it uses the Command Line Tools toolchain):
 ```
 
 Requires macOS 12+ and a Swift 5.9+ toolchain. It also builds and runs on
-Linux (Swift 6+); there, only the OpenAI OAuth sign-in is unavailable, and the
-other LLM providers work as usual.
+Linux and Windows (Swift 6+). On both, OpenAI OAuth sign-in is unavailable (the
+other LLM providers work as usual); on Windows, clipboard and terminal-theme
+auto-detection also fall back for now.
 
 ## Keybindings
 
