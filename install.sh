@@ -13,6 +13,11 @@ set -euo pipefail
 PREFIX="${PREFIX:-/usr/local/bin}"
 REPO="pixdeo/editxr"
 FROM_SOURCE="${FROM_SOURCE:-0}"
+# Opt-in: also expose editxr as the short command `edx`.
+#   EDX_SHORTCUT=1 curl -fsSL .../install.sh | bash
+# Off by default. Set EDX_FORCE=1 to overwrite an existing `edx` in $PREFIX.
+EDX_SHORTCUT="${EDX_SHORTCUT:-0}"
+EDX_FORCE="${EDX_FORCE:-0}"
 
 # Copy a file into PREFIX, escalating to sudo only if PREFIX isn't writable.
 install_bin() {
@@ -23,6 +28,33 @@ install_bin() {
     echo "==> $PREFIX needs elevated permissions; using sudo for the copy"
     sudo mkdir -p "$PREFIX"
     sudo install -m 0755 "$src" "$PREFIX/editxr"
+}
+
+# Symlink $PREFIX/edx -> editxr (relative, so it tracks editxr within $PREFIX).
+# Skips if a foreign `edx` already lives in $PREFIX unless EDX_FORCE=1.
+install_edx_shortcut() {
+    local link="$PREFIX/edx"
+    # Already our own symlink? Nothing to do (idempotent on re-install).
+    if [ -L "$link" ] && [ "$(readlink "$link")" = "editxr" ]; then
+        echo "==> 'edx' shortcut already present at $link"
+        return
+    fi
+    if [ -e "$link" ] || [ -L "$link" ]; then
+        if [ "$EDX_FORCE" != "1" ]; then
+            echo "warning: $link already exists and isn't editxr's; leaving it untouched." >&2
+            echo "         Re-run with EDX_FORCE=1 to overwrite it." >&2
+            return
+        fi
+        echo "==> Overwriting existing $link (EDX_FORCE=1)"
+    fi
+    if ln -sf editxr "$link" 2>/dev/null; then :; else sudo ln -sf editxr "$link"; fi
+    echo "==> Linked 'edx' -> editxr at $link"
+    # Note any other 'edx' it might shadow on PATH.
+    local other; other="$(command -v edx 2>/dev/null || true)"
+    if [ -n "$other" ] && [ "$other" != "$link" ]; then
+        echo "    note: this shadows '$other' in shells where $PREFIX precedes it in PATH."
+    fi
+    echo "    to undo: rm \"$link\""
 }
 
 # Build from source as a fallback (original behaviour).
@@ -92,3 +124,5 @@ fi
 
 echo "==> Installed editxr to $PREFIX/editxr"
 "$PREFIX/editxr" --version
+
+[ "$EDX_SHORTCUT" = "1" ] && install_edx_shortcut

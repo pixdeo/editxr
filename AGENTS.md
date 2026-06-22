@@ -24,11 +24,13 @@ Run (release):
 
 Tests:
 - swift test
-- Note: no test targets are currently present.
+- On this machine plain `swift build`/`swift test` may hit a beta-SDK issue; use
+  the Command Line Tools SDK: `xcrun --sdk macosx swift test`.
+- Test target: `editxrTests` (Tests/editxrTests), `@testable import editxr`.
 
-Single test (if/when tests exist):
+Single test:
 - swift test --filter <TestCase>/<testMethod>
-- Example: swift test --filter EditorStateTests/testUndo
+- Example: swift test --filter RenderTests/testWrappedRowsWithEmojiNeverExceedWidth
 
 Lint/format:
 - No lint or formatter configured (no SwiftLint or SwiftFormat config).
@@ -156,16 +158,36 @@ Lint/format:
 - Use `///` only for public-facing types or complex behavior.
 - Avoid inline comments for obvious code.
 
+## Testing policy (required for every change)
+
+Every modification — feature, fix, or refactor — MUST ship with a test that
+fails before the change and passes after, and `swift test` MUST be green before
+the work is considered done. No exceptions for "it's just a one-liner".
+
+- Reproduce first: write the failing test that captures the bug/behavior, then
+  fix. This is how the wrap, ordered-list, and heading-emphasis bugs were caught.
+- Prefer deterministic tests over manual/PTY checks. Rendering is testable
+  headlessly via `EditorApp.renderContentLinesForTest(width:height:)`, which runs
+  the real wrap/markup paths and returns the content rows as strings.
+  - `RenderTests.plain(_:)` strips ANSI; assert on visible text.
+  - For layout, assert each row's `.displayWidth` fits the padded budget (wide
+    glyphs like emoji/CJK count as 2 columns — see RenderTests).
+- Pure logic (parsing, file state) gets direct unit tests: see MarkupTests
+  (MarkdownHTML / heading emphasis) and ReloadTests (external-change + reload).
+- When adding a render/markup/parse seam, expose a minimal `internal` hook so the
+  test target can reach it via `@testable` rather than loosening `private`.
+
 ## Adding new features
 
 - Follow the existing layout: Models, Services, Views, Utils.
 - Keep the TUI responsive; avoid blocking work on the main thread.
 - Add configuration flags to Config with sensible defaults.
+- Add or update tests alongside the change (see Testing policy).
 
 ## Notes for agents
 
 - No Cursor or Copilot rule files are present in the repo.
-- The app is a single target executable; no test target yet.
+- The executable target is `editxr`; tests live in the `editxrTests` target.
 - Keep changes minimal and consistent with the current style.
 - Use english for git messages.
 - Use english for code and comments.

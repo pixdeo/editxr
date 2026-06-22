@@ -10,7 +10,7 @@ private enum SegmentRenderMode {
     case collapsed([MarkdownSpan])
     case codeBlock
     case selection
-    case heading(String)
+    case heading(style: String, spans: [MarkdownSpan])
     case list(ListRender)
     case quote(QuoteRender)
     case frontmatterDelimiter
@@ -90,6 +90,7 @@ class EditorApp {
     /// confirms and exits. Any other key clears it (see handleInput).
     private var pendingQuit = false
     private var toastTimer: DispatchSourceTimer?
+    private var fileWatchTimer: DispatchSourceTimer?
     /// Frames at full strength, then frames spent fading to invisible (~0.05s each).
     private let toastHoldFrames = 16
     private let toastFadeFrames = 18
@@ -136,6 +137,12 @@ class EditorApp {
     private func buildCommands() -> [PaletteCommand] {
         var cmds: [PaletteCommand] = []
 
+        // Reloading discards unsaved edits, so when the buffer is dirty the entry
+        // opens a confirm submenu instead of acting immediately.
+        let reloadCmd: PaletteCommand = state.isDirty
+            ? submenuCommand("Reload from disk…") { [weak self] in self?.reloadConfirmCommands() ?? [] }
+            : PaletteCommand(title: "Reload from disk", shortcut: "") { [weak self] in self?.reloadActive() }
+
         cmds.append(.header("File"))
         cmds += [
             // keepsOpen so activating it swaps the panel into the file switcher
@@ -143,6 +150,7 @@ class EditorApp {
             PaletteCommand(title: "Open file", shortcut: "^O", keepsOpen: true) { [weak self] in self?.openQuickSwitcher() },
             PaletteCommand(title: "Follow link under cursor", shortcut: "^]") { [weak self] in self?.followLinkUnderCursor() },
             PaletteCommand(title: "Save", shortcut: "^S") { [weak self] in self?.state.save() },
+            reloadCmd,
             PaletteCommand(title: "Export to HTML", shortcut: "^E") { [weak self] in self?.exportToHTML() },
             PaletteCommand(title: "Quit", shortcut: "^Q") { [weak self] in self?.quit() },
         ]
@@ -386,10 +394,39 @@ class EditorApp {
             self?.render()
         }
 
+        startFileWatch()
+
         hideCursor()
         render()
         if showSplash { startSplashTimer() }
         dispatchMain()
+    }
+
+    /// Poll the open files' mtimes a couple of times a second so an external
+    /// change (git pull, another editor, a sync client) surfaces as a status-bar
+    /// flag plus a one-shot toast. Reloading is left to the user (^P).
+    private func startFileWatch() {
+        let timer = DispatchSource.makeTimerSource(queue: .main)
+        timer.schedule(deadline: .now() + 1.5, repeating: 1.5)
+        timer.setEventHandler { [weak self] in self?.checkExternalChanges() }
+        timer.resume()
+        fileWatchTimer = timer
+    }
+
+    private func checkExternalChanges() {
+        for s in states {
+            guard s.checkExternalChange() else { continue }
+            if s.isDirty {
+                // Unsaved edits would be lost: don't auto-reload. Keep the flag
+                // (status-bar indicator) and toast the active file; ^P reloads.
+                if s === state { showToast("Changed on disk — ^P to reload") }
+            } else {
+                // Clean buffer: pull the new contents in automatically (VS Code
+                // style). reloadFromDisk clears the flag; toast only the active one.
+                s.reloadFromDisk()
+                if s === state { showToast("Reloaded — file changed on disk") }
+            }
+        }
     }
 
     /// Spin the welcome donut at ~16fps while the splash is up.
@@ -812,6 +849,20 @@ class EditorApp {
         }
     }
 
+    /// Reload the active document from disk and confirm with a toast.
+    private func reloadActive() {
+        state.reloadFromDisk()
+        showToast("Reloaded from disk")
+    }
+
+    /// Yes/no submenu shown when reloading would discard unsaved local edits.
+    private func reloadConfirmCommands() -> [PaletteCommand] {
+        [
+            PaletteCommand(title: "Discard unsaved changes & reload", shortcut: "") { [weak self] in self?.reloadActive() },
+            PaletteCommand(title: "Cancel", shortcut: "") {},
+        ]
+    }
+
     private func showLLMModal() {
         let doc = state.document
         let startLine: Int, endLine: Int
@@ -963,6 +1014,13 @@ class EditorApp {
         PlatformTerminal.terminalSize()
     }
     
+    /// Test hook: render the active document's content area to lines at a fixed
+    /// size, without touching the terminal. Mirrors the production content render
+    /// (`renderNormalMode`) so render tests exercise the real wrap/markup paths.
+    func renderContentLinesForTest(width: Int, height: Int) -> [String] {
+        return renderNormalMode(width: width, height: height, gutterWidth: gutterWidth())
+    }
+
     private func gutterWidth() -> Int {
         // The gutter doubles as the configurable left margin.
         if state.showLineNumbers {
@@ -1458,13 +1516,15 @@ class EditorApp {
                     }
                 } else {
                     let spans = MarkdownLineParser.parse(line)
-                    let isHeading = spans.first.map { isHeadingSpan($0) } ?? false
+                    let headingSpan = spans.first.flatMap { isHeadingSpan($0) ? $0 : nil }
                     let cursorInSpan = isCursorLine ? MarkdownLineParser.spanContainingCursor(column: doc.cursorColumn, spans: spans) : nil
 
-                    if inHandle && isHeading {
-                        renderedLine = highlightFirstGlyph(renderLineCollapsed(line: line, spans: spans, isCursorLine: false, cursorColumn: 0))
-                    } else if (isHeading && isCursorLine) || cursorInSpan != nil {
+                    if inHandle, let h = headingSpan {
+                        renderedLine = highlightFirstGlyph(renderHeadingContent(h.content, base: headingStyle(h.kind)))
+                    } else if (headingSpan != nil && isCursorLine) || cursorInSpan != nil {
                         renderedLine = renderLineRaw(line: line, cursorColumn: doc.cursorColumn)
+                    } else if let h = headingSpan {
+                        renderedLine = renderHeadingContent(h.content, base: headingStyle(h.kind))
                     } else {
                         renderedLine = renderLineCollapsed(line: line, spans: spans, isCursorLine: isCursorLine, cursorColumn: doc.cursorColumn)
                     }
@@ -1828,7 +1888,11 @@ class EditorApp {
             if isCursorLine && !inHandle {
                 return (line, .raw)
             }
-            return (heading.content, .heading(headingStyle(heading.kind)))
+            // Parse the heading text itself for inline emphasis (e.g. a **bold**
+            // run inside a title) so the inner markers collapse like anywhere
+            // else. Spans are relative to the content, matching the wrapped text.
+            let contentSpans = MarkdownLineParser.parse(heading.content)
+            return (heading.content, .heading(style: headingStyle(heading.kind), spans: contentSpans))
         }
         if let quote = parseQuoteLine(line) {
             if isCursorLine && !inHandle {
@@ -1883,8 +1947,8 @@ class EditorApp {
             return renderCodeBlockSegment(segment: segment, cursorColumn: localCursor, width: width)
         case .raw:
             return renderLineRaw(line: segment, cursorColumn: localCursor)
-        case .heading(let style):
-            return renderStyledSegment(segment: segment, style: style, cursorColumn: localCursor)
+        case .heading(let style, let spans):
+            return renderSegmentCollapsed(segment: segment, segmentStart: segmentStart, spans: spans, cursorColumn: localCursor, base: style)
         case .collapsed(let spans):
             return renderSegmentCollapsed(segment: segment, segmentStart: segmentStart, spans: spans, cursorColumn: localCursor)
         case .list(let render):
@@ -2156,27 +2220,24 @@ class EditorApp {
         return !foundClosing && lineIndex > 0
     }
     
-    private func renderStyledSegment(segment: String, style: String, cursorColumn: Int) -> String {
-        var result = ""
-        for (i, char) in segment.enumerated() {
-            if i == cursorColumn {
-                result += "\(Theme.inverse)\(char)\(Theme.reset)"
-            } else {
-                result += "\(style)\(char)\(Theme.reset)"
-            }
-        }
-        if cursorColumn == segment.count {
-            result += "\(Theme.inverse) \(Theme.reset)"
-        }
-        return result
+    /// Render a heading's text (marker already stripped) with inline emphasis
+    /// collapsed onto the heading colour. Headings only reach this on non-cursor
+    /// rows, so the whole content renders as a single segment with no cursor.
+    private func renderHeadingContent(_ content: String, base: String) -> String {
+        let spans = MarkdownLineParser.parse(content)
+        return renderSegmentCollapsed(segment: content, segmentStart: 0, spans: spans, cursorColumn: -1, base: base)
     }
-    
-    private func renderSegmentCollapsed(segment: String, segmentStart: Int, spans: [MarkdownSpan], cursorColumn: Int) -> String {
+
+    /// Render a wrapped segment with markers collapsed. `base` is an optional
+    /// style applied to every visible character (used for headings, so inline
+    /// emphasis layers on the heading colour instead of replacing it); pass ""
+    /// for plain body text.
+    private func renderSegmentCollapsed(segment: String, segmentStart: Int, spans: [MarkdownSpan], cursorColumn: Int, base: String = "") -> String {
         if spans.isEmpty {
             if cursorColumn >= 0 {
                 return renderLineRaw(line: segment, cursorColumn: cursorColumn)
             }
-            return segment
+            return base.isEmpty ? segment : "\(base)\(segment)\(Theme.reset)"
         }
         
         var result = ""
@@ -2201,8 +2262,10 @@ class EditorApp {
                     switch span.kind {
                     // Pair emphasis with an explicit colour so it never falls back
                     // to the terminal's (possibly mismatched) bold/default colour.
-                    case .bold: style = Theme.textPrimary + Theme.bold
-                    case .italic: style = Theme.textPrimary + Theme.italic
+                    // Inside a heading (`base` set), layer bold/italic on the
+                    // heading colour instead of swapping to the body colour.
+                    case .bold: style = (base.isEmpty ? Theme.textPrimary : base) + Theme.bold
+                    case .italic: style = (base.isEmpty ? Theme.textPrimary : base) + Theme.italic
                     case .code: style = Theme.string
                     case .heading1: style = Theme.heading1
                     case .heading2: style = Theme.heading2
@@ -2212,15 +2275,17 @@ class EditorApp {
                     break
                 }
             }
-            
+
             if isMarker {
                 continue
             }
-            
+
             if isCursor {
                 result += "\(Theme.inverse)\(char)\(Theme.reset)"
             } else if !style.isEmpty {
                 result += "\(style)\(char)\(Theme.reset)"
+            } else if !base.isEmpty {
+                result += "\(base)\(char)\(Theme.reset)"
             } else {
                 result += String(char)
             }
@@ -2233,34 +2298,49 @@ class EditorApp {
         return result
     }
     
+    /// Word-wrap `line` to `width` *display columns*. Breaks are measured by
+    /// `displayWidth` (so wide glyphs — emoji, CJK — count as 2), but the returned
+    /// `startOffset` stays a Character index, because the cursor/span/segment math
+    /// downstream is Character-based. Prefers the last space within budget;
+    /// hard-breaks a word that has none, and never drops a glyph.
     private func wrapLine(_ line: String, width: Int) -> [(segment: String, startOffset: Int)] {
         guard width > 0 else { return [(line, 0)] }
         if line.isEmpty { return [("", 0)] }
-        if line.count <= width { return [(line, 0)] }
-        
+        let chars = Array(line)
+        let n = chars.count
+        if chars.reduce(0, { $0 + displayWidth($1) }) <= width { return [(line, 0)] }
+
         var segments: [(segment: String, startOffset: Int)] = []
-        var remaining = line
-        var offset = 0
-        
-        while !remaining.isEmpty {
-            if remaining.count <= width {
-                segments.append((remaining, offset))
+        var start = 0
+        while start < n {
+            var w = 0
+            var i = start
+            var lastSpace = -1
+            while i < n {
+                let cw = displayWidth(chars[i])
+                if w + cw > width { break }
+                w += cw
+                if chars[i] == " " { lastSpace = i }
+                i += 1
+            }
+            if i >= n {                       // the rest fits
+                segments.append((String(chars[start..<n]), start))
                 break
             }
-            
-            let chunk = String(remaining.prefix(width))
-            if let lastSpace = chunk.lastIndex(of: " "), lastSpace > chunk.startIndex {
-                let breakPoint = chunk.distance(from: chunk.startIndex, to: lastSpace)
-                segments.append((String(remaining.prefix(breakPoint)), offset))
-                offset += breakPoint + 1
-                remaining = String(remaining.dropFirst(breakPoint + 1))
-            } else {
-                segments.append((chunk, offset))
-                offset += width
-                remaining = String(remaining.dropFirst(width))
+            if i == start {                   // a single glyph wider than the budget
+                segments.append((String(chars[start..<start + 1]), start))
+                start += 1
+                continue
+            }
+            if lastSpace > start {            // word wrap: drop the breaking space
+                segments.append((String(chars[start..<lastSpace]), start))
+                start = lastSpace + 1
+            } else {                          // no space: hard break, keep every glyph
+                segments.append((String(chars[start..<i]), start))
+                start = i
             }
         }
-        
+
         return segments.isEmpty ? [("", 0)] : segments
     }
     
@@ -2899,6 +2979,10 @@ class EditorApp {
         } else if state.isDirty {
             append("\(Theme.accent)◉\(Theme.statusBarText)", visible: 1)
         }
+        if state.fileChangedExternally {
+            let label = "⟳ modified on disk"
+            append("\(Theme.accent)\(label)\(Theme.statusBarText)", visible: label.displayWidth)
+        }
         switch state.focusMode {
         case .off:  break
         case .line: append("[FOCUS]", visible: 7)
@@ -3270,8 +3354,17 @@ class ArrowKeyParser {
         case pageKey
         case pageModifier
         case ss3
+        case csiIgnore
     }
-    
+
+    /// True for a CSI final byte (0x40–0x7E, i.e. `@`…`~`), which terminates an
+    /// `ESC [ … ` sequence. Parameter/intermediate bytes (digits, `;`, …) are
+    /// below this range and keep the sequence open.
+    private func isCSIFinalByte(_ character: Character) -> Bool {
+        guard let scalar = character.unicodeScalars.first else { return false }
+        return (0x40...0x7E).contains(scalar.value)
+    }
+
     func parse(character: Character) -> Bool {
         switch state {
         case .initial:
@@ -3319,16 +3412,19 @@ class ArrowKeyParser {
                 state = .pageKey
                 return true
             }
-            state = .initial
             switch character {
-            case "A": arrowKey = .up
-            case "B": arrowKey = .down
-            case "C": arrowKey = .right
-            case "D": arrowKey = .left
-            case "H": arrowKey = .home
-            case "F": arrowKey = .end
-            case "Z": arrowKey = .shiftTab
-            default: break
+            case "A": arrowKey = .up; state = .initial
+            case "B": arrowKey = .down; state = .initial
+            case "C": arrowKey = .right; state = .initial
+            case "D": arrowKey = .left; state = .initial
+            case "H": arrowKey = .home; state = .initial
+            case "F": arrowKey = .end; state = .initial
+            case "Z": arrowKey = .shiftTab; state = .initial
+            default:
+                // Unknown CSI (e.g. ESC[3~ forward-delete, ESC[2~ insert, a
+                // function key). Swallow the rest of the sequence so its bytes
+                // never leak into the document as literal text.
+                state = isCSIFinalByte(character) ? .initial : .csiIgnore
             }
             return true
 
@@ -3339,7 +3435,6 @@ class ArrowKeyParser {
                 state = .pageModifier
                 return true
             }
-            state = .initial
             if character == "~" && !buffer.isEmpty {
                 if buffer[0] == "5" {
                     arrowKey = .pageUp
@@ -3348,7 +3443,12 @@ class ArrowKeyParser {
                 } else if buffer[0] == "4" {
                     arrowKey = .end
                 }
+                state = .initial
+                return true
             }
+            // More parameter bytes (a multi-digit code) or an unknown terminator:
+            // swallow the rest of the sequence rather than leak it as text.
+            state = isCSIFinalByte(character) ? .initial : .csiIgnore
             return true
 
         case .pageModifier:
@@ -3369,6 +3469,12 @@ class ArrowKeyParser {
                 state = .initial
                 return true
             }
+            // A non-"~" final byte means a malformed/unknown sequence — stop here
+            // instead of accumulating forever.
+            if isCSIFinalByte(character) {
+                state = .initial
+                return true
+            }
             // Accumulate the modifier digit(s) until the closing "~".
             buffer.append(character)
             return true
@@ -3381,18 +3487,24 @@ class ArrowKeyParser {
             // ESC [ 1 ~  == Home
             if character == "~" {
                 arrowKey = .home
+                state = .initial
+                return true
             }
-            state = .initial
+            // ESC [ 1 5 ~ (F5) and friends: more parameter bytes follow. Swallow
+            // the rest so the trailing "~" doesn't land in the document.
+            state = isCSIFinalByte(character) ? .initial : .csiIgnore
             return true
-            
+
         case .semicolon:
             if character == "2" || character == "5" || character == "6" {
                 buffer = [character]
                 state = .modifierValue
                 return true
             }
-            state = .initial
-            return false
+            // Unknown modifier (e.g. ESC [ 1 ; 3 C == Alt+Right): swallow to the
+            // sequence's final byte instead of leaking the digits and the letter.
+            state = isCSIFinalByte(character) ? .initial : .csiIgnore
+            return true
             
         case .modifierValue:
             state = .initial
@@ -3412,6 +3524,14 @@ class ArrowKeyParser {
             case ("6", "C"): arrowKey = .ctrlShiftRight
             case ("6", "D"): arrowKey = .ctrlShiftLeft
             default: break
+            }
+            return true
+
+        case .csiIgnore:
+            // Swallow the remainder of an unrecognized CSI sequence up to and
+            // including its final byte (0x40–0x7E), so none of it is inserted.
+            if isCSIFinalByte(character) {
+                state = .initial
             }
             return true
         }

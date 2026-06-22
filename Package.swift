@@ -11,5 +11,9 @@ let package = Package(
         .executableTarget(
             name: "editxr"
         ),
+        .testTarget(
+            name: "editxrTests",
+            dependencies: ["editxr"]
+        ),
     ]
 )

@@ -57,6 +57,11 @@ class EditorState {
     var themeName: ThemeName = .system
     var appearance: Appearance = .auto
     var isDirty: Bool = false
+    /// mtime of the file as we last read or wrote it; drives external-change
+    /// detection. nil if the file doesn't exist yet.
+    private var lastKnownModified: Date? = nil
+    /// Set once the file changes on disk after our last load/save, until reloaded.
+    var fileChangedExternally: Bool = false
     var showSavedIndicator: Bool = false
     var scrollOffset: Int = 0
     var scrollX: Int = 0
@@ -157,8 +162,43 @@ class EditorState {
         isDirty = false
         undoStack.removeAll()
         redoStack.removeAll()
+        lastKnownModified = currentFileModified()
+        fileChangedExternally = false
     }
-    
+
+    /// The file's on-disk modification date, or nil if it can't be read.
+    private func currentFileModified() -> Date? {
+        guard let attrs = try? FileManager.default.attributesOfItem(atPath: filePath) else { return nil }
+        return attrs[.modificationDate] as? Date
+    }
+
+    /// Re-read the file from disk, discarding unsaved changes and undo history,
+    /// keeping the cursor where it was (clamped to the new contents). Callers are
+    /// responsible for guarding unsaved work before invoking this.
+    func reloadFromDisk() {
+        let line = document.cursorLine
+        let col = document.cursorColumn
+        let scroll = scrollOffset
+        loadFile()
+        guard !document.lines.isEmpty else { return }
+        let l = max(0, min(line, document.lines.count - 1))
+        document.cursorLine = l
+        document.cursorColumn = max(0, min(col, document.lines[l].count))
+        scrollOffset = max(0, min(scroll, document.lines.count - 1))
+        document.clearSelection()
+    }
+
+    /// Compare the on-disk mtime to what we last loaded. Flags an external change
+    /// and returns true only on the transition, so callers notify just once.
+    func checkExternalChange() -> Bool {
+        guard !fileChangedExternally,
+              let disk = currentFileModified(),
+              let known = lastKnownModified,
+              disk > known else { return false }
+        fileChangedExternally = true
+        return true
+    }
+
     private func saveSnapshot() {
         let snapshot = DocumentSnapshot(
             lines: document.lines,
@@ -211,6 +251,8 @@ class EditorState {
         do {
             try document.content.write(toFile: filePath, atomically: true, encoding: .utf8)
             isDirty = false
+            lastKnownModified = currentFileModified()
+            fileChangedExternally = false
             showSavedIndicator = true
             onSavedIndicatorChanged?()
             

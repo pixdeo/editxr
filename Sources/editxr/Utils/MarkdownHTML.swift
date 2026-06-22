@@ -136,6 +136,21 @@ enum MarkdownHTML {
                 continue
             }
 
+            // Ordered list (1. / 1) …). Honour the first item's number via `start`
+            // so a list that doesn't begin at 1 keeps its numbering.
+            if orderedItem(t) != nil {
+                var items = ""
+                var start: Int? = nil
+                while i < lines.count, let item = orderedItem(lines[i].trimmingCharacters(in: .whitespaces)) {
+                    if start == nil { start = item.number }
+                    items += "<li>\(inline(item.content))</li>\n"
+                    i += 1
+                }
+                let startAttr = (start.map { $0 != 1 } ?? false) ? " start=\"\(start!)\"" : ""
+                html += "<ol\(startAttr)>\n\(items)</ol>\n"
+                continue
+            }
+
             // Paragraph
             var para: [String] = []
             while i < lines.count {
@@ -156,6 +171,7 @@ enum MarkdownHTML {
         if t.hasPrefix("```") || t.hasPrefix(">") { return true }
         if isThematicBreak(t) { return true }
         if listItem(t) != nil { return true }
+        if orderedItem(t) != nil { return true }
         if isTableRow(t), let n = next, isTableSeparator(n) { return true }
         return false
     }
@@ -186,6 +202,18 @@ enum MarkdownHTML {
         if lower.hasPrefix("[x] ") { return (true, String(content.dropFirst(4))) }
         content = content.trimmingCharacters(in: .whitespaces)
         return (nil, content)
+    }
+
+    /// An ordered-list item: one or more digits, then `.` or `)`, then a space.
+    private static func orderedItem(_ t: String) -> (number: Int, content: String)? {
+        let chars = Array(t)
+        var i = 0
+        while i < chars.count && chars[i].isNumber { i += 1 }
+        guard i > 0, i < chars.count, chars[i] == "." || chars[i] == ")" else { return nil }
+        guard i + 1 < chars.count, chars[i + 1] == " " else { return nil }
+        let number = Int(String(chars[0..<i])) ?? 1
+        let content = String(chars[(i + 2)...]).trimmingCharacters(in: .whitespaces)
+        return (number, content)
     }
 
     private static func isTableRow(_ t: String) -> Bool { t.contains("|") && !t.isEmpty }
