@@ -64,6 +64,10 @@ class EditorApp {
     /// Scanned file list for the quick-switcher, cached for the lifetime of one
     /// panel session so searching doesn't re-walk the directory per keystroke.
     private var fileCommandCache: [PaletteCommand]?
+    /// Resolved OSC 8 URIs per wikilink name (lowercased), so rendering a link
+    /// doesn't re-scan the vault every frame. nil value = name didn't resolve.
+    /// Invalidated whenever the set of open/known files changes.
+    private var wikiURICache: [String: String?] = [:]
     private var inputLoop: AnyObject?
     private var resizeWatch: AnyObject?
     private var arrowKeyParser = ArrowKeyParser()
@@ -2248,17 +2252,19 @@ class EditorApp {
             
             var isMarker = false
             var style = ""
-            
+            var linkSpan: MarkdownSpan? = nil
+
             for span in spans {
                 let inOpeningMarker = globalPos >= span.rawStart && globalPos < span.contentStart
                 let inClosingMarker = globalPos >= span.contentEnd && globalPos < span.rawEnd
-                
+
                 if inOpeningMarker || inClosingMarker {
                     isMarker = true
                     break
                 }
-                
+
                 if globalPos >= span.contentStart && globalPos < span.contentEnd {
+                    if span.kind == .link { linkSpan = span }
                     switch span.kind {
                     // Pair emphasis with an explicit colour so it never falls back
                     // to the terminal's (possibly mismatched) bold/default colour.
@@ -2270,7 +2276,9 @@ class EditorApp {
                     case .heading1: style = Theme.heading1
                     case .heading2: style = Theme.heading2
                     case .heading3: style = Theme.heading3
-                    case .link: style = Theme.accent + Theme.underline
+                    // No static underline — the OSC 8 wrapper below makes the
+                    // terminal draw it on Cmd-hover, like Claude Code's links.
+                    case .link: style = Theme.accent
                     }
                     break
                 }
@@ -2278,6 +2286,13 @@ class EditorApp {
 
             if isMarker {
                 continue
+            }
+
+            // Open/close an OSC 8 hyperlink around the link's display text so the
+            // terminal underlines it on hover and follows it on Cmd-click.
+            let linkUri = linkSpan.flatMap { linkURI(for: $0.linkTarget) }
+            if let span = linkSpan, let uri = linkUri, globalPos == span.contentStart {
+                result += Theme.hyperlinkOpen(uri)
             }
 
             if isCursor {
@@ -2288,6 +2303,10 @@ class EditorApp {
                 result += "\(base)\(char)\(Theme.reset)"
             } else {
                 result += String(char)
+            }
+
+            if let span = linkSpan, linkUri != nil, globalPos == span.contentEnd - 1 {
+                result += Theme.hyperlinkClose
             }
         }
         
@@ -2631,10 +2650,17 @@ class EditorApp {
             case .heading1: style = Theme.heading1
             case .heading2: style = Theme.heading2
             case .heading3: style = Theme.heading3
-            case .link: style = Theme.accent + Theme.underline
+            // No static underline: the OSC 8 wrapper below makes the terminal
+            // draw it on Cmd-hover, the way Claude Code's links behave.
+            case .link: style = Theme.accent
             }
 
+            // Wrap a link's display text in an OSC 8 hyperlink so the terminal
+            // underlines it on hover and follows it on Cmd-click.
+            let linkUri = span.kind == .link ? linkURI(for: span.linkTarget) : nil
+            if let uri = linkUri { result += Theme.hyperlinkOpen(uri) }
             result += renderWithCursor(text: span.content, style: style, visualPos: &visualPos, cursorCol: visualCursorCol)
+            if linkUri != nil { result += Theme.hyperlinkClose }
             lastEnd = span.rawEnd
         }
         
@@ -3195,12 +3221,44 @@ class EditorApp {
             showSplash = false
         }
         fileCommandCache = nil   // the set of open files changed
+        wikiURICache.removeAll()
     }
 
     // MARK: - Follow links
 
     /// Open the link under the cursor: file links in a tab, http(s)/mailto in the
     /// browser, [[wikilinks]] resolved by name against the vault.
+    /// Absolute URI for an OSC 8 hyperlink built from a link span's target, or
+    /// nil to render the link as plain text. http(s)/mailto pass through; relative
+    /// paths and wiki names resolve to `file://` so the terminal's Cmd-click opens
+    /// the note (plain left-click still navigates in-app). Wiki resolution is
+    /// cached — see `wikiURICache` — so this stays cheap in the render loop.
+    private func linkURI(for target: MarkdownLink.Target?) -> String? {
+        guard let target else { return nil }
+        switch target {
+        case .path(let raw):
+            let t = raw.trimmingCharacters(in: .whitespaces)
+            if t.hasPrefix("http://") || t.hasPrefix("https://") || t.hasPrefix("mailto:") { return t }
+            var path = t
+            if let hash = path.firstIndex(of: "#") { path = String(path[..<hash]) }
+            guard !path.isEmpty else { return nil }
+            return fileURI(resolveRelative(path))
+        case .wiki(let name):
+            var base = name
+            if let anchor = base.firstIndex(where: { $0 == "#" || $0 == "^" }) {
+                base = String(base[..<anchor]).trimmingCharacters(in: .whitespaces)
+            }
+            guard !base.isEmpty else { return nil }
+            let key = base.lowercased()
+            if let cached = wikiURICache[key] { return cached }
+            let uri = resolveWikiName(base).map(fileURI)
+            wikiURICache[key] = uri
+            return uri
+        }
+    }
+
+    private func fileURI(_ path: String) -> String { URL(fileURLWithPath: path).absoluteString }
+
     private func followLinkUnderCursor() {
         guard let target = MarkdownLink.linkAt(line: state.document.currentLineText,
                                                column: state.document.cursorColumn) else {
@@ -3303,6 +3361,7 @@ class EditorApp {
     private func openQuickSwitcher() {
         guard let panel = commandPanel else { return }
         fileCommandCache = nil
+        wikiURICache.removeAll()
         panel.setRoot(title: "Open file") { [weak self] in self?.fileSwitcherCommands() ?? [] }
         panel.show()
         render()

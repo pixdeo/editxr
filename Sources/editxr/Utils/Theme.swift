@@ -595,4 +595,13 @@ struct Theme {
     static let italic = "\u{1B}[3m"
     static let inverse = "\u{1B}[7m"
     static let underline = "\u{1B}[4m"
+
+    /// OSC 8 hyperlink wrappers. Wrapping a link's display text in
+    /// `hyperlinkOpen(uri) … hyperlinkClose` lets the host terminal draw the
+    /// on-hover underline (Cmd/Ctrl + mouse) and follow the target on
+    /// Cmd/Ctrl-click — the same affordance Claude Code and modern CLIs use.
+    /// ST-terminated (`ESC \`); zero display width, so it doesn't affect column
+    /// math. Terminals without OSC 8 ignore it and just show the plain text.
+    static func hyperlinkOpen(_ uri: String) -> String { "\u{1B}]8;;\(uri)\u{1B}\\" }
+    static let hyperlinkClose = "\u{1B}]8;;\u{1B}\\"
 }

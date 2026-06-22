@@ -22,6 +22,15 @@ final class RenderTests: XCTestCase {
                     i += 1
                     while i < chars.count && !chars[i].isLetter { i += 1 }
                     if i < chars.count { i += 1 }
+                } else if i < chars.count && chars[i] == "]" {
+                    // OSC (e.g. OSC 8 hyperlinks): ESC ] … terminated by BEL or
+                    // ST (ESC \). Skip the whole sequence, URI payload included.
+                    i += 1
+                    while i < chars.count {
+                        if chars[i] == "\u{07}" { i += 1; break }
+                        if chars[i] == "\u{1B}" && i + 1 < chars.count && chars[i + 1] == "\\" { i += 2; break }
+                        i += 1
+                    }
                 } else {
                     // Other escapes: skip the introducer byte.
                     if i < chars.count { i += 1 }
@@ -99,6 +108,42 @@ final class RenderTests: XCTestCase {
         segunda linea
         """
         assertRowsWithinBudget(content, width: 24)
+    }
+
+    // MARK: - Links: collapsed display + OSC 8 hyperlinks
+
+    func testInlineLinkRendersCollapsedAsHyperlink() {
+        // The display text shows (markers + URL hidden), and the link is wrapped
+        // in an OSC 8 hyperlink so the terminal underlines it on Cmd-hover and
+        // follows it on Cmd-click — the affordance Claude Code's links use.
+        let content = """
+        Ver el [sitio oficial](https://example.com) para mas info
+        segunda linea
+        """
+        let app = makeApp(content, cursorLine: 1)
+        let raw = app.renderContentLinesForTest(width: 80, height: 20).joined()
+        let visible = RenderTests.plain(raw)
+
+        XCTAssertTrue(visible.contains("sitio oficial"), "lost the link display text:\n\(visible)")
+        XCTAssertFalse(visible.contains("https://example.com"), "URL should be hidden:\n\(visible)")
+        XCTAssertFalse(visible.contains("]("), "inline-link markers should be hidden:\n\(visible)")
+        XCTAssertTrue(raw.contains("\u{1B}]8;;https://example.com\u{1B}\\"),
+                      "missing OSC 8 hyperlink around the link text")
+    }
+
+    func testWikilinkRendersAliasCollapsed() {
+        // [[Target|alias]] collapses to the alias; brackets, pipe, and the
+        // target name are all hidden.
+        let content = """
+        Mira la [[Otra Nota|nota relacionada]] aca
+        segunda linea
+        """
+        let app = makeApp(content, cursorLine: 1)
+        let visible = renderedRows(app, width: 80).joined(separator: " ")
+
+        XCTAssertTrue(visible.contains("nota relacionada"), "lost the wikilink alias:\n\(visible)")
+        XCTAssertFalse(visible.contains("[["), "wikilink markers should be hidden:\n\(visible)")
+        XCTAssertFalse(visible.contains("Otra Nota"), "wikilink target name should not show:\n\(visible)")
     }
 
     /// Render every row and assert no row is wider on screen than the others.

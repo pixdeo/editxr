@@ -17,7 +17,10 @@ struct MarkdownSpan {
     let contentStart: Int   // start of actual content (excludes markers)
     let contentEnd: Int     // end of actual content (excludes markers)
     let content: String     // the text without markers
-    
+    /// For `.link` spans: the navigation target (url or wiki name), used to
+    /// build the OSC 8 hyperlink URI. nil for every other kind.
+    var linkTarget: MarkdownLink.Target? = nil
+
     var rawRange: Range<Int> { rawStart..<rawEnd }
     var contentRange: Range<Int> { contentStart..<contentEnd }
     /// Hidden characters before the content (e.g. "**", "[") and after it
@@ -201,9 +204,14 @@ struct MarkdownLineParser {
                     let contentStart = (pipe.map { $0 + 1 }) ?? (startIndex + 2)
                     let contentEnd = i
                     guard contentEnd > contentStart else { return nil }
+                    // Target is the name before any "|alias" (so [[Note|text]]
+                    // resolves to Note, not its display text).
+                    let nameEnd = pipe ?? i
+                    let name = String(chars[(startIndex + 2)..<nameEnd]).trimmingCharacters(in: .whitespaces)
                     return MarkdownSpan(kind: .link, rawStart: startIndex, rawEnd: i + 2,
                                         contentStart: contentStart, contentEnd: contentEnd,
-                                        content: String(chars[contentStart..<contentEnd]))
+                                        content: String(chars[contentStart..<contentEnd]),
+                                        linkTarget: name.isEmpty ? nil : .wiki(name))
                 }
                 if chars[i] == "|" && pipe == nil { pipe = i }
                 i += 1
@@ -224,9 +232,11 @@ struct MarkdownLineParser {
         let contentStart = startIndex + 1
         let contentEnd = j
         guard contentEnd > contentStart else { return nil }       // empty text → leave raw
+        let url = String(chars[(j + 2)..<k])
         return MarkdownSpan(kind: .link, rawStart: startIndex, rawEnd: k + 1,
                             contentStart: contentStart, contentEnd: contentEnd,
-                            content: String(chars[contentStart..<contentEnd]))
+                            content: String(chars[contentStart..<contentEnd]),
+                            linkTarget: url.isEmpty ? nil : .path(url))
     }
 
     /// Check if cursor (raw column) is inside any span
