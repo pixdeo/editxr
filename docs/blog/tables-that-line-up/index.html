@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Making Markdown tables line up in any terminal — editxr</title>
+<meta name="description" content="Why terminal Markdown tables drift out of alignment — emoji and symbol widths differ per terminal — and how editxr fixes it by measuring the real glyph width live instead of guessing.">
+<link rel="icon" href="/editxr.png">
+<link rel="canonical" href="https://editxr.org/blog/tables-that-line-up/">
+
+<!-- Social cards -->
+<meta property="og:type" content="article">
+<meta property="og:title" content="Making Markdown tables line up in any terminal">
+<meta property="og:description" content="Emoji and symbol widths differ per terminal, so terminal tables drift out of alignment. editxr fixes it by measuring the real glyph width live instead of guessing.">
+<meta property="og:url" content="https://editxr.org/blog/tables-that-line-up/">
+<meta property="og:image" content="https://editxr.org/editxr.png">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:title" content="Making Markdown tables line up in any terminal">
+<meta name="twitter:description" content="Emoji and symbol widths differ per terminal, so terminal tables drift. editxr measures the real glyph width live instead of guessing.">
+<meta name="twitter:image" content="https://editxr.org/editxr.png">
+
+<!-- Structured data -->
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "BlogPosting",
+  "headline": "Making Markdown tables line up in any terminal",
+  "description": "Emoji and symbol widths differ per terminal, so terminal Markdown tables drift out of alignment. editxr fixes it by measuring the real glyph width live instead of guessing.",
+  "datePublished": "2026-07-06",
+  "author": { "@type": "Person", "name": "Martín Romañuk" },
+  "publisher": { "@type": "Organization", "name": "Pixdeo LTD" },
+  "mainEntityOfPage": "https://editxr.org/blog/tables-that-line-up/",
+  "url": "https://editxr.org/blog/tables-that-line-up/",
+  "image": "https://editxr.org/editxr.png",
+  "about": { "@type": "SoftwareApplication", "name": "editxr", "url": "https://editxr.org" }
+}
+</script>
+
+<style>
+  :root {
+    --bg: #1c1a18;
+    --surface: #262320;
+    --border: #3a352f;
+    --text: #ebe5db;
+    --muted: #8a8379;
+    --accent: #cc785c;
+    --accent-soft: rgba(204, 120, 92, 0.14);
+    --mono: ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, monospace;
+  }
+  * { box-sizing: border-box; }
+  html { scroll-behavior: smooth; }
+  body {
+    margin: 0; background: var(--bg); color: var(--text);
+    font-family: var(--mono); line-height: 1.7; -webkit-font-smoothing: antialiased;
+  }
+  a { color: var(--accent); text-decoration: none; }
+  a:hover { text-decoration: underline; }
+  .wrap { max-width: 720px; margin: 0 auto; padding: 0 1.25rem; }
+
+  /* Top bar */
+  .nav { border-bottom: 1px solid var(--border); }
+  .nav .wrap { display: flex; align-items: center; justify-content: space-between; padding: 1rem 1.25rem; }
+  .nav .brand { display: flex; align-items: center; gap: .5rem; color: var(--text); font-weight: 600; }
+  .nav .brand img { width: 22px; height: 22px; }
+  .nav .links a { color: var(--muted); margin-left: 1.1rem; font-size: .9rem; }
+  .nav .links a:hover { color: var(--accent); }
+
+  /* Article */
+  article { padding: 3.5rem 0 1rem; }
+  .eyebrow { color: var(--muted); font-size: .8rem; text-transform: uppercase; letter-spacing: .08em; margin: 0 0 .75rem; }
+  article h1 { font-size: 2rem; line-height: 1.25; margin: 0 0 .6rem; }
+  article h2 { font-size: 1.3rem; margin: 2.5rem 0 1rem; }
+  .byline { color: var(--muted); font-size: .85rem; margin: 0 0 2.25rem; }
+  .lead { font-size: 1.1rem; color: var(--text); }
+  article p { margin: 0 0 1.25rem; }
+  article code { color: var(--accent); background: var(--accent-soft); padding: .1em .4em; border-radius: 4px; font-size: .9em; }
+
+  /* Terminal sample */
+  figure.term { margin: 1.75rem 0 .5rem; }
+  figure.term pre {
+    background: var(--bg); border: 1px solid var(--border); border-radius: 10px;
+    padding: 1rem 1.1rem; overflow-x: auto; color: var(--text);
+    font-size: .82rem; line-height: 1.5; margin: 0;
+  }
+  figure.term figcaption { color: var(--muted); font-size: .85rem; margin-top: .5rem; text-align: center; }
+
+  /* CTA */
+  .cta { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 1.25rem 1.4rem; margin: 2.5rem 0 1rem; }
+  .cta p { margin: 0 0 1rem; color: var(--muted); }
+  .cta pre { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; padding: .7rem .9rem; overflow-x: auto; color: var(--text); font-size: .88rem; margin: 0 0 1rem; }
+  .cta .btn { display: inline-block; padding: .5rem 1rem; border-radius: 8px; border: 1px solid var(--accent); background: var(--accent-soft); color: var(--accent); font-size: .9rem; }
+  .cta .btn:hover { text-decoration: none; }
+
+  footer { border-top: 1px solid var(--border); padding: 2.5rem 0 3rem; text-align: center; color: var(--muted); font-size: .85rem; margin-top: 2rem; }
+  footer a { color: var(--muted); }
+  footer a:hover { color: var(--accent); }
+</style>
+
+<!-- Analytics (self-hosted Umami) -->
+<script defer src="https://umami-analytics.lun.pixdeo.com/script.js" data-website-id="ce97f591-2321-44a6-a897-15847c6dd3bc"></script>
+</head>
+<body>
+
+<nav class="nav">
+  <div class="wrap">
+    <a class="brand" href="/"><img src="/bird.png" alt="">editxr</a>
+    <div class="links">
+      <a href="/blog/">Blog</a>
+      <a href="https://github.com/pixdeo/editxr">GitHub</a>
+    </div>
+  </div>
+</nav>
+
+<article>
+  <div class="wrap">
+    <p class="eyebrow">Blog</p>
+    <h1>Making Markdown tables line up in any terminal</h1>
+    <p class="byline">By Martín Romañuk · July 6, 2026</p>
+
+    <p class="lead">A Markdown table is supposed to line up. In a terminal it often
+    doesn't: put a column of <code>✅</code>, <code>⚠️</code> and <code>★</code> next
+    to each other and the box drifts a character at a time until the borders go
+    ragged. editxr <code>1.6</code> fixes that — and the honest fix turned out to be
+    to stop guessing.</p>
+
+    <figure class="term">
+<pre>│ Panic attack     │ ★ │ ⛔    │ Generate │
+│ Fear             │ ✓ │ ⚠️   │ Partial  │   ← this row used to slip left
+│ Loss of a pet    │ — │ ⛔    │ Generate │</pre>
+      <figcaption>One wrong guess in the status column, repeated down the table.</figcaption>
+    </figure>
+
+    <h2>Why terminal tables drift</h2>
+
+    <p>A terminal is a grid of fixed cells, and every glyph occupies a whole number
+    of them — one column or two. To draw a border in the right place, the editor has
+    to know that width for each character. ASCII is one, most CJK is two; those are
+    easy. Emoji and symbols are where it falls apart.</p>
+
+    <p><code>★</code> (U+2605) and <code>✓</code> (U+2713) look like emoji but most
+    terminals draw them <em>narrow</em>, one column. <code>✅</code> and
+    <code>⛔</code> take two. And <code>⚠️</code> depends on the terminal:
+    Terminal.app draws it narrow, iTerm2 with "Unicode 9 widths" draws it wide — and
+    that's a per-user setting. There is no static table of widths that is correct
+    everywhere. Guess two columns for a glyph the terminal draws in one, repeat it
+    down a status column, and every border below slides over by one.</p>
+
+    <h2>Measure, don't guess</h2>
+
+    <p>So editxr stopped guessing and started asking. On startup it prints each
+    unusual glyph off-screen and sends the one question every terminal answers —
+    <code>ESC [ 6 n</code>, "where is the cursor now?" — then reads back the column
+    and takes the difference as the glyph's true width. Whatever your terminal and
+    your settings actually do, editxr measures it and lays the table out to match.</p>
+
+    <p>It re-measures when you open a file that brings in symbols it hasn't seen, and
+    when there's no terminal to ask — a pipe, a test, a silent terminal — it falls
+    back to a sensible heuristic instead of hanging. Curious what your terminal does?
+    <code>editxr --probe-widths</code> prints the measured width of each symbol next
+    to the built-in guess.</p>
+
+    <h2>And a smaller nicety: tables that agree with each other</h2>
+
+    <p>Once each table lines up on its own, the next thing you notice is that two
+    tables in the same document don't line up with <em>each other</em>. So editxr now
+    pads every table out to the width of the widest one, so their borders run
+    straight down the page. It's on by default; toggle "Align tables to widest" from
+    the command palette (<code>Ctrl+/</code>) if you'd rather each table keep its
+    natural width.</p>
+
+    <h2>A sidebar came along too</h2>
+
+    <p>The same release adds a docked left sidebar with two modes. <strong>Outline</strong>
+    lists the document's headings and follows your cursor as you scroll — press
+    <code>Enter</code> on one to jump there. <strong>Files</strong> is an explorer for
+    the current directory. <code>Tab</code> moves focus into the panel, arrows (or
+    <code>j</code>/<code>k</code>) move, <code>Enter</code> opens a file or jumps to a
+    heading, and <code>Esc</code> hands focus back to the editor. Both modes live
+    behind the palette.</p>
+
+    <div class="cta">
+      <p>Update and point it at a folder of notes.</p>
+      <pre>brew install pixdeo/tap/editxr</pre>
+      <a class="btn" href="https://github.com/pixdeo/editxr">View on GitHub</a>
+    </div>
+  </div>
+</article>
+
+<footer>
+  <div class="wrap">
+    <a href="/">Home</a> ·
+    <a href="/blog/">Blog</a> ·
+    <a href="https://github.com/pixdeo/editxr">GitHub</a> ·
+    <a href="https://github.com/pixdeo/editxr/blob/main/LICENSE">MIT</a> ·
+    © 2026 Pixdeo LTD
+  </div>
+</footer>
+
+</body>
+</html>
