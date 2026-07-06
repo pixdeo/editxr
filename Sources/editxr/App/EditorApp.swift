@@ -398,7 +398,8 @@ class EditorApp {
     func start() {
         setInputMode()
         enterAlternateScreen()
-        
+        calibrateGlyphWidths()
+
         inputLoop = PlatformTerminal.startInputLoop { [weak self] data in
             self?.handleInput(data)
         }
@@ -415,6 +416,33 @@ class EditorApp {
         render()
         if showSplash { startSplashTimer() }
         dispatchMain()
+    }
+
+    /// Ask the terminal how wide the non-ASCII glyphs actually render and record
+    /// the answers, so table columns and wrapping match reality on any terminal
+    /// (emoji / ambiguous-symbol width differs across Terminal.app, iTerm2, …).
+    /// Runs once at startup, before the async input loop, so the CSI 6n replies
+    /// aren't stolen by the reader. Glyphs typed later fall back to the heuristic.
+    private func calibrateGlyphWidths() {
+        var glyphs = Set<Character>()
+        // Seed with common status/symbol glyphs so tables align even before the
+        // user types them (they may live in a not-yet-open file).
+        for s in ["★", "☆", "✓", "✔", "➡", "♻", "☀", "⚠", "⚠️", "✅", "⛔",
+                  "⏰", "☑", "☐", "▶️", "❤️", "→", "—", "…", "•", "·"] {
+            if let c = s.first { glyphs.insert(c) }
+        }
+        outer: for state in states {
+            for line in state.document.lines {
+                for ch in line where (ch.unicodeScalars.first?.value ?? 0) >= 0x2000 {
+                    glyphs.insert(ch)
+                    if glyphs.count > 512 { break outer }
+                }
+            }
+        }
+        let probed = PlatformTerminal.probeWidths(glyphs.map(String.init))
+        var measured: [Character: Int] = [:]
+        for (s, w) in probed { if let c = s.first { measured[c] = w } }
+        registerMeasuredWidths(measured)
     }
 
     /// Poll the open files' mtimes a couple of times a second so an external

@@ -14,7 +14,23 @@ import WinSDK
 /// Call sites stay platform-agnostic — see PORTING_TO_WINDOWS.md.
 enum PlatformTerminal {
 
+    /// Parse the column out of a Cursor-Position-Report reply, `ESC [ row ; col R`.
+    /// Tolerant of leading noise (mouse/paste bytes): it anchors on the final `R`
+    /// and the `;` immediately before it. Pure + terminal-free so it's unit-tested.
+    static func parseCPRColumn(_ reply: String) -> Int? {
+        guard let rIdx = reply.lastIndex(of: "R") else { return nil }
+        let head = reply[..<rIdx]
+        guard let semi = head.lastIndex(of: ";") else { return nil }
+        return Int(head[head.index(after: semi)...])
+    }
+
 #if os(Windows)
+
+    // Width probing needs a synchronous CPR round-trip on stdin; the Windows
+    // input path is a background ReadFile thread, so skip it and fall back to
+    // the static heuristic (Windows Terminal follows Unicode 9 widths anyway).
+    static func probeWidths(_ strings: [String]) -> [String: Int] { [:] }
+
     // MARK: Windows (WinSDK console API)
 
     private static var savedInMode: DWORD = 0
@@ -95,6 +111,48 @@ enum PlatformTerminal {
 
 #else
     // MARK: POSIX (macOS / Linux) — the existing code, moved verbatim.
+
+    /// Measure how wide each string renders on THIS terminal: print it at the
+    /// line start, ask for the cursor position (CSI 6n), and take the advance.
+    /// Adapts to whatever the terminal + user settings actually do with emoji /
+    /// ambiguous-width symbols — the only portable answer.
+    ///
+    /// Must run after enableRawMode() and before the async input loop starts, so
+    /// the replies aren't stolen by the reader. Returns [:] when stdin/stdout
+    /// aren't a terminal or it doesn't answer within the timeout (→ heuristic).
+    static func probeWidths(_ strings: [String]) -> [String: Int] {
+        guard isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 else { return [:] }
+        fflush(stdout)
+        var result: [String: Int] = [:]
+        for s in strings {
+            // Home, draw the glyph, ask where the cursor landed.
+            let query = "\u{1B}[H\(s)\u{1B}[6n"
+            _ = query.withCString { write(STDOUT_FILENO, $0, strlen($0)) }
+            guard let reply = readCPRReply(timeoutMs: 150),
+                  let col = parseCPRColumn(reply) else {
+                break   // A silent terminal aborts probing; keep what we have.
+            }
+            let width = col - 1
+            if width == 1 || width == 2 { result[s] = width }
+        }
+        // Wipe the probe row; the caller draws a full frame next anyway.
+        _ = "\u{1B}[H\u{1B}[2J".withCString { write(STDOUT_FILENO, $0, strlen($0)) }
+        return result
+    }
+
+    /// Block (bounded by `timeoutMs`) for a `…R`-terminated CPR reply on stdin.
+    private static func readCPRReply(timeoutMs: Int) -> String? {
+        var bytes = [UInt8]()
+        while bytes.count < 32 {
+            var pfd = pollfd(fd: STDIN_FILENO, events: Int16(POLLIN), revents: 0)
+            guard poll(&pfd, 1, Int32(timeoutMs)) > 0 else { return nil }
+            var byte: UInt8 = 0
+            guard read(STDIN_FILENO, &byte, 1) == 1 else { return nil }
+            bytes.append(byte)
+            if byte == UInt8(ascii: "R") { break }
+        }
+        return String(bytes: bytes, encoding: .utf8)
+    }
 
     static func enableRawMode() {
         var tattr = termios()

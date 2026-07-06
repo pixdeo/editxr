@@ -1,8 +1,28 @@
 import Foundation
 
+/// Per-grapheme widths measured from the live terminal at startup, keyed by the
+/// exact grapheme. Consulted before the static heuristic so on-screen glyphs are
+/// laid out at the width THIS terminal (and the user's settings) actually draw —
+/// the only portable answer, since emoji / ambiguous-symbol width varies between
+/// Terminal.app, iTerm2, Ghostty, tmux, … See PlatformTerminal.probeWidths.
+/// Written once at startup on the main thread, before any rendering.
+private var measuredWidths: [Character: Int] = [:]
+
+/// Record widths measured from the terminal. Only 1- and 2-column results are
+/// trusted; anything else is treated as noise and left to the heuristic.
+func registerMeasuredWidths(_ measured: [Character: Int]) {
+    for (ch, w) in measured where w == 1 || w == 2 { measuredWidths[ch] = w }
+}
+
+/// Reset the measured-width cache (tests, so cases stay independent).
+func resetMeasuredWidths() { measuredWidths.removeAll() }
+
 /// Number of terminal columns a character occupies (0, 1 or 2).
-/// Approximates wcwidth: combining marks are zero-width, CJK/emoji are wide.
+/// Prefers a width measured live from this terminal; otherwise approximates
+/// wcwidth: combining marks are zero-width, CJK/emoji are wide.
 func displayWidth(_ char: Character) -> Int {
+    if let measured = measuredWidths[char] { return measured }
+
     guard let scalar = char.unicodeScalars.first else { return 1 }
     let v = scalar.value
 

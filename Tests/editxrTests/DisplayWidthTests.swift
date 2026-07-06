@@ -35,4 +35,38 @@ final class DisplayWidthTests: XCTestCase {
         XCTAssertEqual("✅ 228".displayWidth, 6)   // 2 + space + "228"
         XCTAssertEqual("⛔".displayWidth, 2)
     }
+
+    // MARK: - Live terminal measurement (probeWidths → registerMeasuredWidths)
+
+    override func tearDown() {
+        resetMeasuredWidths()   // keep measured overrides from leaking between tests
+        super.tearDown()
+    }
+
+    func testMeasuredWidthOverridesHeuristic() {
+        // If the terminal reports ⚠️ as two columns, layout must honour that even
+        // though the static heuristic defaults it to one.
+        XCTAssertEqual(displayWidth("⚠️"), 1)
+        registerMeasuredWidths(["⚠️": 2, "★": 2])
+        XCTAssertEqual(displayWidth("⚠️"), 2)
+        XCTAssertEqual(displayWidth("★"), 2)
+        resetMeasuredWidths()
+        XCTAssertEqual(displayWidth("⚠️"), 1, "reset restores the heuristic")
+    }
+
+    func testMeasuredWidthIgnoresOutOfRangeValues() {
+        // 0 / negative / >2 come from a garbled reply and must not be trusted.
+        registerMeasuredWidths(["★": 0, "✓": 5])
+        XCTAssertEqual(displayWidth("★"), 1)
+        XCTAssertEqual(displayWidth("✓"), 1)
+    }
+
+    func testParseCPRColumn() {
+        XCTAssertEqual(PlatformTerminal.parseCPRColumn("\u{1B}[1;3R"), 3)
+        XCTAssertEqual(PlatformTerminal.parseCPRColumn("\u{1B}[24;2R"), 2)
+        // Tolerates leading noise before the report.
+        XCTAssertEqual(PlatformTerminal.parseCPRColumn("junk\u{1B}[5;2R"), 2)
+        XCTAssertNil(PlatformTerminal.parseCPRColumn("\u{1B}[5;garbage"))
+        XCTAssertNil(PlatformTerminal.parseCPRColumn(""))
+    }
 }
