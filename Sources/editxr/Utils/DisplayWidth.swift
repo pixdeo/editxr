@@ -14,6 +14,9 @@ func registerMeasuredWidths(_ measured: [Character: Int]) {
     for (ch, w) in measured where w == 1 || w == 2 { measuredWidths[ch] = w }
 }
 
+/// Whether this grapheme already has a measured width (skip re-probing it).
+func hasMeasuredWidth(_ char: Character) -> Bool { measuredWidths[char] != nil }
+
 /// Reset the measured-width cache (tests, so cases stay independent).
 func resetMeasuredWidths() { measuredWidths.removeAll() }
 

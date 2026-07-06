@@ -44,12 +44,14 @@ final class RenderTests: XCTestCase {
 
     /// Build an EditorApp around `content`, with the cursor parked on a line
     /// other than the ones under test (so they render collapsed, not raw).
-    func makeApp(_ content: String, cursorLine: Int, wordWrap: Bool = true) -> EditorApp {
+    func makeApp(_ content: String, cursorLine: Int, wordWrap: Bool = true,
+                 alignTables: Bool = false) -> EditorApp {
         let tmp = NSTemporaryDirectory() + "editxr-test-\(UUID().uuidString).md"
         try? content.write(toFile: tmp, atomically: true, encoding: .utf8)
         let state = EditorState(filePath: tmp)
         state.wordWrap = wordWrap
         state.blockMode = false
+        state.alignTables = alignTables
         let clamped = max(0, min(cursorLine, state.document.lines.count - 1))
         state.document.cursorLine = clamped
         state.document.cursorColumn = 0
@@ -172,9 +174,55 @@ final class RenderTests: XCTestCase {
             .filter { $0.contains("│") || $0.contains("├") || $0.contains("╭") || $0.contains("╰") }
 
         XCTAssertGreaterThanOrEqual(rows.count, 6, "expected the full boxed table")
-        let widths = Set(rows.map { $0.displayWidth })
+        // Rows are padded to the terminal width; trim to the real box width (each
+        // row ends at its border) so a ragged column actually shows up here.
+        func boxWidth(_ s: String) -> Int {
+            var t = s; while t.hasSuffix(" ") { t.removeLast() }; return t.displayWidth
+        }
+        let widths = Set(rows.map(boxWidth))
         XCTAssertEqual(widths.count, 1,
             "table rows have mismatched widths \(widths.sorted()):\n" + rows.joined(separator: "\n"))
+    }
+
+    /// Box widths of every boxed table row. Rows are padded to the full terminal
+    /// width, so trailing spaces are trimmed to recover each table's true width
+    /// (a table row ends at its right border, never a space).
+    private func tableRowWidths(_ content: String, alignTables: Bool) -> Set<Int> {
+        let app = makeApp(content, cursorLine: 0, alignTables: alignTables)
+        let rows = app.renderContentLinesForTest(width: 120, height: 30)
+            .map { RenderTests.plain($0) }
+            .filter { r in r.contains("│") || r.contains("├") || r.contains("╭") || r.contains("╰") }
+        func boxWidth(_ s: String) -> Int {
+            var t = s
+            while t.hasSuffix(" ") { t.removeLast() }
+            return t.displayWidth
+        }
+        return Set(rows.map(boxWidth))
+    }
+
+    private let twoUnevenTables = """
+    # Doc
+
+    | A | B |
+    |---|---|
+    | x | y |
+
+    | Much wider heading here | C |
+    |---|---|
+    | value | z |
+    """
+
+    func testAlignTablesMakesEveryTableTheSameWidth() {
+        let widths = tableRowWidths(twoUnevenTables, alignTables: true)
+        XCTAssertEqual(widths.count, 1,
+            "aligned tables should share one width, got \(widths.sorted())")
+    }
+
+    func testTablesKeepNaturalWidthsWhenAlignmentOff() {
+        // Control: with the preference off the two tables differ in width.
+        let widths = tableRowWidths(twoUnevenTables, alignTables: false)
+        XCTAssertGreaterThan(widths.count, 1,
+            "unaligned tables of different widths should not all match")
     }
 
     /// Rows are padded to a fixed `gutter + width` budget, so the narrowest row

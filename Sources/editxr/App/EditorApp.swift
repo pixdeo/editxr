@@ -69,6 +69,9 @@ class EditorApp {
     /// Invalidated whenever the set of open/known files changes.
     private var wikiURICache: [String: String?] = [:]
     private var inputLoop: AnyObject?
+    /// Set once the terminal proves it won't answer CSI 6n (not a tty, or silent),
+    /// so later file opens skip probing instead of stalling on the poll timeout.
+    private var widthProbingDisabled = false
     private var resizeWatch: AnyObject?
     private var arrowKeyParser = ArrowKeyParser()
     private let llmService = LLMService()
@@ -297,6 +300,7 @@ class EditorApp {
             toggleCommand("Outline sidebar", state.sidebarMode == .outline ? "on" : "off") { [weak self] in self?.toggleSidebarMode(.outline) },
             toggleCommand("File explorer sidebar", state.sidebarMode == .files ? "on" : "off") { [weak self] in self?.toggleSidebarMode(.files) },
             toggleCommand("Toggle full table borders", "") { [weak self] in self?.state.toggleFullTable() },
+            toggleCommand("Align tables to widest", state.alignTables ? "on" : "off") { [weak self] in self?.state.toggleAlignTables() },
             PaletteCommand(title: "Set left margin", shortcut: "\(state.leftMargin)") { [weak self] in
                 guard let self = self else { return }
                 self.commandPanel?.beginInput(prompt: "Left margin (columns, 0–8)", value: "\(self.state.leftMargin)", isSecret: false) { [weak self] value in
@@ -418,12 +422,9 @@ class EditorApp {
         dispatchMain()
     }
 
-    /// Ask the terminal how wide the non-ASCII glyphs actually render and record
-    /// the answers, so table columns and wrapping match reality on any terminal
-    /// (emoji / ambiguous-symbol width differs across Terminal.app, iTerm2, …).
-    /// Runs once at startup, before the async input loop, so the CSI 6n replies
-    /// aren't stolen by the reader. Glyphs typed later fall back to the heuristic.
-    private func calibrateGlyphWidths() {
+    /// Non-ASCII glyphs worth measuring: a seed of common status symbols plus
+    /// every ≥U+2000 glyph in the open documents that we haven't measured yet.
+    private func uncalibratedGlyphs() -> [Character] {
         var glyphs = Set<Character>()
         // Seed with common status/symbol glyphs so tables align even before the
         // user types them (they may live in a not-yet-open file).
@@ -439,7 +440,22 @@ class EditorApp {
                 }
             }
         }
+        return glyphs.filter { !hasMeasuredWidth($0) }
+    }
+
+    /// Ask the terminal how wide the open documents' non-ASCII glyphs actually
+    /// render and record the answers, so table columns and wrapping match reality
+    /// on any terminal (emoji / ambiguous-symbol width differs across Terminal.app,
+    /// iTerm2, …). Runs at startup and again when a file is opened — always on the
+    /// main queue, serialized with the input source, so the CSI 6n replies aren't
+    /// stolen by the reader. Only unmeasured glyphs are probed; a terminal that
+    /// never answers disables further probing so opens can't stall.
+    private func calibrateGlyphWidths() {
+        guard !widthProbingDisabled else { return }
+        let glyphs = uncalibratedGlyphs()
+        guard !glyphs.isEmpty else { return }
         let probed = PlatformTerminal.probeWidths(glyphs.map(String.init))
+        if probed.isEmpty { widthProbingDisabled = true; return }  // not a tty / silent
         var measured: [Character: Int] = [:]
         for (s, w) in probed { if let c = s.first { measured[c] = w } }
         registerMeasuredWidths(measured)
@@ -1689,13 +1705,26 @@ class EditorApp {
         return out
     }
 
-    /// Map of line index -> styled table-row string. Blocks containing the cursor
-    /// are omitted so they render raw (and stay editable).
-    private func tableRenderMap(width: Int) -> [Int: String] {
+    /// A contiguous table: header at `start`, separator at `start+1`, data rows
+    /// up to (but not including) `end`. `widths` is the per-column display width.
+    private struct TableBlock {
+        let start: Int
+        let end: Int
+        let numCols: Int
+        var widths: [Int]
+    }
+
+    /// Total rendered width of a table with these column widths: left border plus
+    /// each column's " cell " and its right border — matches renderTableRow.
+    private func tableTotalWidth(_ widths: [Int]) -> Int {
+        1 + widths.reduce(0) { $0 + $1 + 3 }
+    }
+
+    /// Find every table block and its natural column widths (cursor-independent).
+    private func collectTableBlocks() -> [TableBlock] {
         let lines = state.document.lines
         let n = lines.count
-        let cursorLine = state.document.cursorLine
-        var map: [Int: String] = [:]
+        var blocks: [TableBlock] = []
         var i = 0
         while i < n {
             if isTableRowLine(lines[i]) && !isTableSeparatorLine(lines[i]) &&
@@ -1704,11 +1733,9 @@ class EditorApp {
                 while e < n && isTableRowLine(lines[e]) && !isTableSeparatorLine(lines[e]) {
                     e += 1
                 }
-                let block = i..<e
-
                 var numCols = 0
                 var rowCells: [[String]] = []
-                for r in block where r != i + 1 {
+                for r in i..<e where r != i + 1 {
                     let cells = parseTableCells(lines[r])
                     numCols = max(numCols, cells.count)
                     rowCells.append(cells)
@@ -1719,32 +1746,57 @@ class EditorApp {
                         widths[c] = max(widths[c], renderInlineCell(cells[c], base: "").width)
                     }
                 }
-
-                // Keep the table rendered when the cursor only rests at a row's
-                // start (block-mode handle); drop to raw once it's editing (col > 0).
-                if !block.contains(cursorLine) || state.cursorInBlockHandle {
-                    for r in block {
-                        let role: TableRole = r == i ? .header : (r == i + 1 ? .separator : .data)
-                        var rendered = renderTableRow(line: lines[r], role: role, widths: widths, numCols: numCols, width: width)
-                        // Mark the row the cursor rests on (it'd otherwise vanish).
-                        if r == cursorLine && state.cursorInBlockHandle {
-                            rendered = highlightFirstGlyph(rendered)
-                        }
-                        map[r] = rendered
-                    }
-                    // Full-box borders reuse the blank lines surrounding the table.
-                    if state.fullTable {
-                        if i - 1 >= 0 && isBlankLine(lines[i - 1]) && cursorLine != i - 1 {
-                            map[i - 1] = renderTableRow(line: "", role: .top, widths: widths, numCols: numCols, width: width)
-                        }
-                        if e < n && isBlankLine(lines[e]) && cursorLine != e {
-                            map[e] = renderTableRow(line: "", role: .bottom, widths: widths, numCols: numCols, width: width)
-                        }
-                    }
-                }
+                blocks.append(TableBlock(start: i, end: e, numCols: numCols, widths: widths))
                 i = e
             } else {
                 i += 1
+            }
+        }
+        return blocks
+    }
+
+    /// Map of line index -> styled table-row string. Blocks containing the cursor
+    /// are omitted so they render raw (and stay editable).
+    private func tableRenderMap(width: Int) -> [Int: String] {
+        let lines = state.document.lines
+        let n = lines.count
+        let cursorLine = state.document.cursorLine
+        var blocks = collectTableBlocks()
+
+        // Visual preference: pad every table out to the widest one by growing its
+        // last column, so their outer borders line up. Cursor-independent (based
+        // on structure) so it doesn't jump as you move between tables.
+        if state.alignTables, blocks.count > 1 {
+            let target = blocks.map { tableTotalWidth($0.widths) }.max() ?? 0
+            for idx in blocks.indices where !blocks[idx].widths.isEmpty {
+                let grow = target - tableTotalWidth(blocks[idx].widths)
+                if grow > 0 { blocks[idx].widths[blocks[idx].widths.count - 1] += grow }
+            }
+        }
+
+        var map: [Int: String] = [:]
+        for b in blocks {
+            let block = b.start..<b.end
+            // Keep the table rendered when the cursor only rests at a row's start
+            // (block-mode handle); drop to raw once it's editing (col > 0).
+            guard !block.contains(cursorLine) || state.cursorInBlockHandle else { continue }
+            for r in block {
+                let role: TableRole = r == b.start ? .header : (r == b.start + 1 ? .separator : .data)
+                var rendered = renderTableRow(line: lines[r], role: role, widths: b.widths, numCols: b.numCols, width: width)
+                // Mark the row the cursor rests on (it'd otherwise vanish).
+                if r == cursorLine && state.cursorInBlockHandle {
+                    rendered = highlightFirstGlyph(rendered)
+                }
+                map[r] = rendered
+            }
+            // Full-box borders reuse the blank lines surrounding the table.
+            if state.fullTable {
+                if b.start - 1 >= 0 && isBlankLine(lines[b.start - 1]) && cursorLine != b.start - 1 {
+                    map[b.start - 1] = renderTableRow(line: "", role: .top, widths: b.widths, numCols: b.numCols, width: width)
+                }
+                if b.end < n && isBlankLine(lines[b.end]) && cursorLine != b.end {
+                    map[b.end] = renderTableRow(line: "", role: .bottom, widths: b.widths, numCols: b.numCols, width: width)
+                }
             }
         }
         return map
@@ -3307,6 +3359,7 @@ class EditorApp {
         fileCommandCache = nil   // the set of open files changed
         fileTreeScanCache = nil  // a new file may have appeared on disk
         wikiURICache.removeAll()
+        calibrateGlyphWidths()   // measure any symbols the newly-opened file adds
     }
 
     // MARK: - Follow links

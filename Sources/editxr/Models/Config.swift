@@ -8,6 +8,7 @@ struct Config: Codable {
     var statusBarBig: Bool? = true
     var scrollPastEnd: Bool? = true
     var fullTable: Bool? = true
+    var alignTables: Bool? = false      // render every table as wide as the widest
     var contextHelp: Bool? = true
     var blockMode: Bool? = true
     var showOutline: Bool? = false      // legacy; migrated to `sidebar` on load
