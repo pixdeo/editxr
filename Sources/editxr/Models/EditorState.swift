@@ -53,6 +53,8 @@ class EditorState {
     /// Block mode: at column 0 of a structured line, show it rendered (a "handle")
     /// and only drop to raw once you move right or start typing.
     var blockMode: Bool = true
+    /// What the docked left sidebar shows (off / outline / files).
+    var sidebarMode: SidebarMode = .off
     var leftMargin: Int = 1
     var themeName: ThemeName = .system
     var appearance: Appearance = .auto
@@ -107,6 +109,12 @@ class EditorState {
         self.fullTable = config.fullTable ?? true
         self.contextHelp = config.contextHelp ?? true
         self.blockMode = config.blockMode ?? true
+        // Prefer the new `sidebar` setting; fall back to the legacy showOutline flag.
+        if let raw = config.sidebar, let mode = SidebarMode(rawValue: raw) {
+            self.sidebarMode = mode
+        } else if config.showOutline == true {
+            self.sidebarMode = .outline
+        }
         self.leftMargin = max(0, min(8, config.leftMargin ?? 1))
         self.scrollMargin = max(0, min(20, config.scrollOff ?? 4))
         // Clay is the default on first run; a saved choice still wins.
@@ -319,6 +327,11 @@ class EditorState {
         blockMode.toggle()
         saveConfig()
     }
+    /// Toggle a sidebar mode on, or off if it's already showing.
+    func toggleSidebar(_ mode: SidebarMode) {
+        sidebarMode = (sidebarMode == mode) ? .off : mode
+        saveConfig()
+    }
 
     func setLeftMargin(_ value: Int) {
         leftMargin = max(0, min(8, value))
@@ -393,6 +406,7 @@ class EditorState {
         config.fullTable = fullTable
         config.contextHelp = contextHelp
         config.blockMode = blockMode
+        config.sidebar = sidebarMode.rawValue
         config.leftMargin = leftMargin
         config.scrollOff = scrollMargin
         config.theme = themeName.rawValue
@@ -1313,5 +1327,19 @@ class EditorState {
         document.cursorLine = max(0, document.lines.count - 1)
         document.cursorColumn = min(document.cursorColumn, document.currentLineText.count)
         document.clearSelection()
+    }
+
+    /// Move the cursor to `line` (clamped) and scroll so it sits a third of the
+    /// way down the viewport — the usual "reveal line" behaviour. Used by the
+    /// outline panel to jump to a heading.
+    func goToLine(_ line: Int, viewportHeight: Int) {
+        guard !document.lines.isEmpty else { return }
+        let target = max(0, min(line, document.lines.count - 1))
+        document.cursorLine = target
+        document.cursorColumn = 0
+        document.clearSelection()
+        let margin = max(0, viewportHeight / 3)
+        let maxScroll = max(0, document.lines.count - 1)
+        scrollOffset = max(0, min(target - margin, maxScroll))
     }
 }

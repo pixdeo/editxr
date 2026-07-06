@@ -95,6 +95,15 @@ class EditorApp {
     private var pendingQuit = false
     private var toastTimer: DispatchSourceTimer?
     private var fileWatchTimer: DispatchSourceTimer?
+    // Docked sidebar (outline / file explorer) transient state.
+    private var sidebarFocused = false
+    private var sidebarSelection = 0
+    private var collapsedFolders: Set<String> = []
+    private var fileTreeScanCache: [String]?
+    /// True iff the sidebar was actually drawn last frame (mode on + room for it).
+    private var sidebarRendered = false
+    /// Content viewport height from the last frame, for sidebar "reveal" jumps.
+    private var lastContentHeight = 1
     /// Frames at full strength, then frames spent fading to invisible (~0.05s each).
     private let toastHoldFrames = 16
     private let toastFadeFrames = 18
@@ -285,6 +294,8 @@ class EditorApp {
             toggleCommand("Toggle big status bar", state.statusBarBig ? "big" : "slim") { [weak self] in self?.state.toggleStatusBarBig() },
             toggleCommand("Toggle contextual hints", state.contextHelp ? "on" : "off") { [weak self] in self?.state.toggleContextHelp() },
             toggleCommand("Toggle block mode", state.blockMode ? "on" : "off") { [weak self] in self?.state.toggleBlockMode() },
+            toggleCommand("Outline sidebar", state.sidebarMode == .outline ? "on" : "off") { [weak self] in self?.toggleSidebarMode(.outline) },
+            toggleCommand("File explorer sidebar", state.sidebarMode == .files ? "on" : "off") { [weak self] in self?.toggleSidebarMode(.files) },
             toggleCommand("Toggle full table borders", "") { [weak self] in self?.state.toggleFullTable() },
             PaletteCommand(title: "Set left margin", shortcut: "\(state.leftMargin)") { [weak self] in
                 guard let self = self else { return }
@@ -646,6 +657,13 @@ class EditorApp {
             return
         }
 
+        // A focused docked sidebar captures navigation keys.
+        if sidebarFocused && sidebarRendered {
+            handleSidebarKey(string)
+            render()
+            return
+        }
+
         if let pasteContent = extractBracketedPaste(string) {
             handlePaste(pasteContent)
             render()
@@ -743,9 +761,14 @@ class EditorApp {
             case Key.ctrlRightBracket:
                 followLinkUnderCursor()
             case Key.tab:
-                // Tab cycles a task's state, or promotes a heading (### → ## → #,
-                // "bigger title"). Both are gated, so plain lines are untouched.
-                if state.cursorLineIsTask {
+                // With a docked sidebar visible, Tab moves focus into it (task
+                // cycling stays on Ctrl+T). Otherwise Tab cycles a task's state or
+                // promotes a heading (### → ## → #); both gated, so plain lines
+                // are untouched.
+                if sidebarRendered && !sidebarFocused {
+                    focusSidebar()
+                    needsRender = true
+                } else if state.cursorLineIsTask {
                     state.cycleTaskState()
                     needsRender = true
                 } else if state.cursorHeadingLevel != nil {
@@ -1025,6 +1048,25 @@ class EditorApp {
         return renderNormalMode(width: width, height: height, gutterWidth: gutterWidth())
     }
 
+    /// Test hook: render the full editor frame (top bar, content, sidebar, status)
+    /// to lines, so tests can exercise composition like the docked outline sidebar.
+    func renderEditorLinesForTest(width: Int, height: Int) -> [String] {
+        return renderEditor(width: width, height: height).components(separatedBy: "\n")
+    }
+
+    // Test hooks for sidebar focus/navigation (no rendering side effects).
+    func focusSidebarForTest() { sidebarRendered = true; focusSidebar() }
+    func sidebarKeyForTest(_ s: String) { handleSidebarKey(s) }
+    func setSidebarSelectionForTest(_ i: Int) { sidebarSelection = i }
+    var sidebarSelectionForTest: Int { sidebarSelection }
+    var sidebarFocusedForTest: Bool { sidebarFocused }
+    func sidebarEntryCountForTest() -> Int { sidebarEntries().count }
+    func sidebarEntryForTest(_ i: Int) -> (text: String, isDir: Bool, path: String) {
+        let e = sidebarEntries()[i]; return (e.text, e.isDir, e.path)
+    }
+    var activeCursorLineForTest: Int { state.document.cursorLine }
+    var activeFileForTest: String { state.filePath }
+
     private func gutterWidth() -> Int {
         // The gutter doubles as the configurable left margin.
         if state.showLineNumbers {
@@ -1177,8 +1219,17 @@ class EditorApp {
         }
 
         let contentHeight = height - reservedLines
+        lastContentHeight = max(1, contentHeight)
+
+        // Docked sidebar reserves a left column; the editor renders into what's
+        // left. The welcome splash always takes the full width.
+        let splashing = showSplash && state.document.lines.allSatisfy { $0.isEmpty }
+        let sideW = splashing ? 0 : sidebarWidth(totalWidth: width)
+        sidebarRendered = sideW > 0
+        let sep = sideW > 0 ? 1 : 0
+        let editorTotal = width - sideW - sep
         let gutter = gutterWidth()
-        let contentWidth = width - gutter
+        let contentWidth = editorTotal - gutter
 
         state.setViewportWidth(contentWidth)
         state.adjustScroll(viewportHeight: contentHeight, viewportWidth: contentWidth)
@@ -1191,7 +1242,7 @@ class EditorApp {
         lines.append(padToWidth(margin + renderTopBar(width: width - state.leftMargin), width: width))
 
         var content: [String]
-        if showSplash && state.document.lines.allSatisfy({ $0.isEmpty }) {
+        if splashing {
             content = renderSplash(totalWidth: width, height: contentHeight)
         } else {
             switch state.viewMode {
@@ -1211,7 +1262,12 @@ class EditorApp {
 
         // Filler rows past the end of the document are simply blank.
         while content.count < contentHeight {
-            content.append(padToWidth("", width: width))
+            content.append(padToWidth("", width: editorTotal))
+        }
+        // Dock the sidebar column on the left of the content region.
+        if sideW > 0 {
+            let side = renderSidebar(width: sideW, height: contentHeight)
+            content = zip(side, content).map { $0 + sidebarSeparator() + $1 }
         }
         lines += content
 
@@ -3221,6 +3277,7 @@ class EditorApp {
             showSplash = false
         }
         fileCommandCache = nil   // the set of open files changed
+        fileTreeScanCache = nil  // a new file may have appeared on disk
         wikiURICache.removeAll()
     }
 
@@ -3355,6 +3412,197 @@ class EditorApp {
         }
         fileCommandCache = cmds
         return cmds
+    }
+
+    /// One row in the docked sidebar, mode-agnostic. `line` is the heading line
+    /// (outline) and `path` the relative path (files); `isDir` flags a folder.
+    private struct SidebarEntry {
+        let text: String
+        let isCurrent: Bool
+        let isDir: Bool
+        let path: String
+        let line: Int
+    }
+
+    /// Width of the docked sidebar column, or 0 when it's off / the terminal is
+    /// too narrow to keep a usable editor column beside it.
+    private func sidebarWidth(totalWidth: Int) -> Int {
+        guard state.sidebarMode != .off else { return 0 }
+        let desired = min(28, max(16, totalWidth / 4))
+        guard totalWidth - desired - 1 >= 24 else { return 0 }
+        return desired
+    }
+
+    /// The separator column between the sidebar and the editor; brightens when
+    /// the sidebar holds keyboard focus.
+    private func sidebarSeparator() -> String {
+        let style = sidebarFocused ? Theme.accent : Theme.textMuted
+        return "\(style)│\(Theme.reset)"
+    }
+
+    /// Cached project scan for the file explorer; invalidated when the open-file
+    /// set changes (see openFile). Avoids walking the tree on every frame.
+    private func fileTreeScan() -> [String] {
+        if let cached = fileTreeScanCache { return cached }
+        let scan = DirectoryScanner.scan(root: vaultRoot())
+        fileTreeScanCache = scan
+        return scan
+    }
+
+    /// Build the sidebar's row model for the active mode.
+    private func sidebarEntries() -> [SidebarEntry] {
+        switch state.sidebarMode {
+        case .off:
+            return []
+        case .outline:
+            let cursor = state.document.cursorLine
+            let items = Outline.items(from: state.document.lines)
+            let current = items.lastIndex(where: { $0.line <= cursor })
+            return items.enumerated().map { i, it in
+                let indent = String(repeating: "  ", count: max(0, it.level - 1))
+                let label = String(it.title.filter { $0 != "*" && $0 != "`" })
+                return SidebarEntry(text: indent + label, isCurrent: i == current,
+                                    isDir: false, path: "", line: it.line)
+            }
+        case .files:
+            let root = vaultRoot()
+            let currentRel = relativeToRoot(absolutePath(state.filePath), root: root)
+            let rows = FileTree.rows(paths: fileTreeScan(), collapsed: collapsedFolders)
+            return rows.map { r in
+                let indent = String(repeating: "  ", count: r.depth)
+                let icon = r.isDir ? (r.isCollapsed ? "▸ " : "▾ ") : ""
+                return SidebarEntry(text: indent + icon + r.name,
+                                    isCurrent: !r.isDir && r.path == currentRel,
+                                    isDir: r.isDir, path: r.path, line: 0)
+            }
+        }
+    }
+
+    private func relativeToRoot(_ path: String, root: String) -> String {
+        path.hasPrefix(root + "/") ? String(path.dropFirst(root.count + 1)) : path
+    }
+
+    /// Render the sidebar column: windowed around the selection (when focused) or
+    /// the current entry, styled, and padded to the column width.
+    private func renderSidebar(width: Int, height: Int) -> [String] {
+        let entries = sidebarEntries()
+        func pad(_ s: String) -> String { padToWidth(s, width: width) }
+
+        guard !entries.isEmpty else {
+            let label = state.sidebarMode == .files ? "No files" : "No headings"
+            var rows = [pad("\(Theme.textMuted)\(label)\(Theme.reset)")]
+            while rows.count < height { rows.append(pad("")) }
+            return rows
+        }
+
+        let current = entries.firstIndex(where: { $0.isCurrent }) ?? 0
+        let focus = sidebarFocused ? min(max(0, sidebarSelection), entries.count - 1) : current
+        let start = sidebarWindowStart(count: entries.count, focus: focus, height: height)
+
+        var rows: [String] = []
+        for i in start..<min(entries.count, start + height) {
+            let e = entries[i]
+            let text = OutlineSidebar.truncate(e.text, to: width)
+            let style: String
+            if sidebarFocused && i == focus {
+                style = "\(Theme.inverse)"
+            } else if e.isCurrent {
+                style = "\(Theme.accent)\(Theme.bold)"
+            } else if e.isDir {
+                style = Theme.textPrimary
+            } else {
+                style = Theme.textSecondary
+            }
+            rows.append(pad("\(style)\(text)\(Theme.reset)"))
+        }
+        while rows.count < height { rows.append(pad("")) }
+        return rows
+    }
+
+    private func sidebarWindowStart(count: Int, focus: Int, height: Int) -> Int {
+        guard count > height else { return 0 }
+        return max(0, min(focus - height / 2, count - height))
+    }
+
+    /// Toggle a sidebar mode from the palette, resetting selection/focus and
+    /// refreshing the project scan when switching the explorer on.
+    private func toggleSidebarMode(_ mode: SidebarMode) {
+        if mode == .files && state.sidebarMode != .files { fileTreeScanCache = nil }
+        state.toggleSidebar(mode)
+        sidebarSelection = 0
+        if state.sidebarMode == .off { sidebarFocused = false }
+    }
+
+    // MARK: - Sidebar focus & navigation
+
+    private func focusSidebar() {
+        let entries = sidebarEntries()
+        sidebarSelection = entries.firstIndex(where: { $0.isCurrent }) ?? 0
+        sidebarFocused = true
+    }
+
+    private func unfocusSidebar() { sidebarFocused = false }
+
+    private func moveSidebarSelection(_ delta: Int) {
+        let n = sidebarEntries().count
+        guard n > 0 else { return }
+        sidebarSelection = max(0, min(sidebarSelection + delta, n - 1))
+    }
+
+    /// Route a key while the sidebar holds focus: arrows / jk move, Enter opens a
+    /// file or jumps to a heading (folders toggle), → / ← (and l / h) expand /
+    /// collapse folders, Esc / Tab return to the editor.
+    private func handleSidebarKey(_ string: String) {
+        let entries = sidebarEntries()
+        guard !entries.isEmpty else {
+            if string == String(Key.escape) || string == String(Key.tab) { unfocusSidebar() }
+            return
+        }
+        sidebarSelection = min(max(0, sidebarSelection), entries.count - 1)
+
+        switch string {
+        case "\u{1B}[A": moveSidebarSelection(-1)
+        case "\u{1B}[B": moveSidebarSelection(1)
+        case "\u{1B}[C": setCollapsed(entries[sidebarSelection], false)
+        case "\u{1B}[D": setCollapsed(entries[sidebarSelection], true)
+        case String(Key.escape), String(Key.tab): unfocusSidebar()
+        default:
+            for ch in string {
+                switch ch {
+                case "k": moveSidebarSelection(-1)
+                case "j": moveSidebarSelection(1)
+                case "l": setCollapsed(entries[sidebarSelection], false)
+                case "h": setCollapsed(entries[sidebarSelection], true)
+                case Key.enter, "\n": activateSidebar(entries[sidebarSelection])
+                case Key.ctrlQ, Key.ctrlD: quit()
+                case Key.ctrlP: unfocusSidebar(); toggleCommandPanel(); return
+                default: break
+                }
+            }
+        }
+    }
+
+    /// Expand (collapse=false) or collapse (collapse=true) a folder entry.
+    private func setCollapsed(_ e: SidebarEntry, _ collapse: Bool) {
+        guard state.sidebarMode == .files, e.isDir else { return }
+        if collapse { collapsedFolders.insert(e.path) } else { collapsedFolders.remove(e.path) }
+    }
+
+    private func activateSidebar(_ e: SidebarEntry) {
+        switch state.sidebarMode {
+        case .outline:
+            state.goToLine(e.line, viewportHeight: lastContentHeight)
+            unfocusSidebar()
+        case .files:
+            if e.isDir {
+                setCollapsed(e, !collapsedFolders.contains(e.path))
+            } else {
+                openFile(absolutePath(vaultRoot() + "/" + e.path))
+                unfocusSidebar()
+            }
+        case .off:
+            break
+        }
     }
 
     /// Open the quick-switcher: a fresh directory scan in the command panel.

@@ -10,6 +10,8 @@ struct Config: Codable {
     var fullTable: Bool? = true
     var contextHelp: Bool? = true
     var blockMode: Bool? = true
+    var showOutline: Bool? = false      // legacy; migrated to `sidebar` on load
+    var sidebar: String? = nil          // SidebarMode raw value (off/outline/files)
     var leftMargin: Int? = 1
     var scrollOff: Int? = 4
     // Stored as the raw string so renaming/removing a theme can't make the
