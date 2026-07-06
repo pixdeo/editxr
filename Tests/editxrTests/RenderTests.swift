@@ -147,6 +147,36 @@ final class RenderTests: XCTestCase {
     }
 
     /// Render every row and assert no row is wider on screen than the others.
+    // MARK: - Table alignment with status symbols
+
+    /// A table whose columns mix ambiguous-width symbols (★ ✓ ⚠) with real
+    /// emoji (✅ ⛔) and plain text. Every rendered table row must share one
+    /// display width, or the box goes ragged (the reported bug: ★/✓ counted as
+    /// two columns shifted each row a column to the left).
+    func testTableWithStatusSymbolsStaysAligned() {
+        let content = """
+        # Heading
+
+        | Situation | Demand | Corpus | Note |
+        |---|:--:|:--:|---|
+        | General anxiety | ★ | ✅ 228 | Build hub now |
+        | Panic attack | ★ | ⛔ | Top priority |
+        | Health anxiety | ✓ | ⛔ | Generate |
+        | Fear / letting go | ✓ | ⚠️ | Partial via anxiety |
+        | Loss of a pet | — | ⛔ | Generate |
+        """
+        // Cursor on the heading so the whole table renders collapsed (boxed).
+        let app = makeApp(content, cursorLine: 0)
+        let rows = app.renderContentLinesForTest(width: 80, height: 24)
+            .map { RenderTests.plain($0) }
+            .filter { $0.contains("│") || $0.contains("├") || $0.contains("╭") || $0.contains("╰") }
+
+        XCTAssertGreaterThanOrEqual(rows.count, 6, "expected the full boxed table")
+        let widths = Set(rows.map { $0.displayWidth })
+        XCTAssertEqual(widths.count, 1,
+            "table rows have mismatched widths \(widths.sorted()):\n" + rows.joined(separator: "\n"))
+    }
+
     /// Rows are padded to a fixed `gutter + width` budget, so the narrowest row
     /// reveals the true budget; any row exceeding it overflows the terminal.
     private func assertRowsWithinBudget(_ content: String, width: Int,
