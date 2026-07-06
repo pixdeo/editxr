@@ -50,7 +50,7 @@ class EditorState {
     var fullTable: Bool = true
     /// Visual preference: pad every table to the widest table's width so their
     /// outer borders line up (only affects documents with more than one table).
-    var alignTables: Bool = false
+    var alignTables: Bool = true
     /// Contextual status-bar hints (e.g. "^T toggle task" on a task line).
     var contextHelp: Bool = true
     /// Block mode: at column 0 of a structured line, show it rendered (a "handle")
@@ -110,7 +110,7 @@ class EditorState {
         self.wordWrap = config.wordWrap
         self.scrollPastEnd = config.scrollPastEnd ?? true
         self.fullTable = config.fullTable ?? true
-        self.alignTables = config.alignTables ?? false
+        self.alignTables = config.alignTables ?? true
         self.contextHelp = config.contextHelp ?? true
         self.blockMode = config.blockMode ?? true
         // Prefer the new `sidebar` setting; fall back to the legacy showOutline flag.
