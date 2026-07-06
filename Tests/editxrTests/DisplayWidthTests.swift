@@ -23,9 +23,10 @@ final class DisplayWidthTests: XCTestCase {
         }
     }
 
-    func testVariationSelectorForcesWide() {
-        // A narrow base symbol + U+FE0F renders as a wide emoji.
-        XCTAssertEqual(displayWidth("⚠️"), 2)   // U+26A0 U+FE0F
+    func testVariationSelectorDoesNotWidenNarrowSymbol() {
+        // Terminal.app draws ⚠️ (U+26A0 U+FE0F) as the narrow text glyph — the
+        // variation selector does not promote it to a wide emoji cell.
+        XCTAssertEqual(displayWidth("⚠️"), 1)   // U+26A0 U+FE0F
         XCTAssertEqual(displayWidth("⚠"), 1)    // bare U+26A0
     }
 

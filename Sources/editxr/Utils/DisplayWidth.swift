@@ -11,12 +11,6 @@ func displayWidth(_ char: Character) -> Int {
     if (0x0300...0x036F).contains(v) || v == 0x200D || (0xFE00...0xFE0F).contains(v) {
         return 0
     }
-    // An emoji variation selector (U+FE0F) forces wide emoji presentation on an
-    // otherwise-narrow base symbol, e.g. ⚠️ (U+26A0 U+FE0F) or ▶️. Check the
-    // whole grapheme, since the base scalar alone reads as text-presentation.
-    if char.unicodeScalars.contains(where: { $0.value == 0xFE0F }) {
-        return 2
-    }
     // Unambiguously wide blocks (CJK, Hangul, fullwidth, dedicated emoji planes).
     if (0x1100...0x115F).contains(v) ||
        (0x2E80...0xA4CF).contains(v) ||
@@ -34,6 +28,8 @@ func displayWidth(_ char: Character) -> Int {
     // ⌥ U+2325) and only those with default emoji presentation wide (✅ ⛔ ⏰ ⌚).
     // Deferring to the Unicode property matches that — a blanket wide range here
     // over-counts the narrow symbols and shifts every table column that uses one.
+    // A trailing U+FE0F (⚠️) does NOT widen them: Terminal.app draws the narrow
+    // text glyph regardless, so we let the base symbol's presentation decide.
     if char.unicodeScalars.contains(where: { $0.properties.isEmojiPresentation }) {
         return 2
     }
