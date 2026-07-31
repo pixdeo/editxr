@@ -20,6 +20,65 @@ func hasMeasuredWidth(_ char: Character) -> Bool { measuredWidths[char] != nil }
 /// Reset the measured-width cache (tests, so cases stay independent).
 func resetMeasuredWidths() { measuredWidths.removeAll() }
 
+/// Everything measured so far, for persisting between runs.
+func allMeasuredWidths() -> [Character: Int] { measuredWidths }
+
+/// On-disk memo of what the probe learned, so only the very first run in a
+/// given terminal pays for the CSI 6n round-trips (and shows their flicker).
+/// Keyed by a signature of the terminal identity: a different terminal — or a
+/// different iTerm2/tmux build, which may draw emoji differently — starts over
+/// rather than trusting stale numbers.
+enum GlyphWidthCache {
+    private struct Payload: Codable {
+        var terminal: String
+        var widths: [String: Int]
+    }
+
+    /// `var` only so tests can redirect it to a temp file instead of the real one.
+    static var path: String = {
+        let home = FileManager.default.homeDirectoryForCurrentUser.path
+        return "\(home)/.config/editxr/glyph-widths.json"
+    }()
+
+    /// What the measurements depend on: the emulator, its version, and whether
+    /// we're inside tmux (which re-implements width itself).
+    static var signature: String {
+        let env = ProcessInfo.processInfo.environment
+        let keys = ["TERM", "TERM_PROGRAM", "TERM_PROGRAM_VERSION", "LC_TERMINAL",
+                    "LC_TERMINAL_VERSION", "COLORTERM"]
+        var parts = keys.map { "\($0)=\(env[$0] ?? "")" }
+        parts.append("TMUX=\(env["TMUX"] != nil)")
+        return parts.joined(separator: "|")
+    }
+
+    /// Seed the in-memory table from disk. Ignores a cache written by another
+    /// terminal, and never throws — a missing or corrupt file just means we probe.
+    static func load() {
+        guard let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let payload = try? JSONDecoder().decode(Payload.self, from: data),
+              payload.terminal == signature else { return }
+        var widths: [Character: Int] = [:]
+        for (s, w) in payload.widths { if let c = s.first, s.count == 1 { widths[c] = w } }
+        registerMeasuredWidths(widths)
+    }
+
+    /// Persist everything measured so far. Best-effort: a failure only costs the
+    /// next run another probe.
+    static func save() {
+        var widths: [String: Int] = [:]
+        for (c, w) in allMeasuredWidths() { widths[String(c)] = w }
+        guard !widths.isEmpty else { return }
+        let payload = Payload(terminal: signature, widths: widths)
+        let dir = (path as NSString).deletingLastPathComponent
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.prettyPrinted, .sortedKeys, .withoutEscapingSlashes]
+        do {
+            try FileManager.default.createDirectory(atPath: dir, withIntermediateDirectories: true)
+            try encoder.encode(payload).write(to: URL(fileURLWithPath: path))
+        } catch { }
+    }
+}
+
 /// Number of terminal columns a character occupies (0, 1 or 2).
 /// Prefers a width measured live from this terminal; otherwise approximates
 /// wcwidth: combining marks are zero-width, CJK/emoji are wide.

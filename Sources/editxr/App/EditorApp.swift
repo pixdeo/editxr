@@ -402,6 +402,7 @@ class EditorApp {
     func start() {
         setInputMode()
         enterAlternateScreen()
+        GlyphWidthCache.load()   // usually leaves nothing to probe → instant start
         calibrateGlyphWidths()
 
         inputLoop = PlatformTerminal.startInputLoop { [weak self] data in
@@ -459,6 +460,7 @@ class EditorApp {
         var measured: [Character: Int] = [:]
         for (s, w) in probed { if let c = s.first { measured[c] = w } }
         registerMeasuredWidths(measured)
+        GlyphWidthCache.save()   // next run in this terminal probes nothing
     }
 
     /// Poll the open files' mtimes a couple of times a second so an external
@@ -1276,6 +1278,7 @@ class EditorApp {
         let contentWidth = editorTotal - gutter
 
         state.setViewportWidth(contentWidth)
+        state.setSingleRowLines(collapsedTableLines())
         state.adjustScroll(viewportHeight: contentHeight, viewportWidth: contentWidth)
 
         let margin = String(repeating: " ", count: state.leftMargin)
@@ -1753,6 +1756,26 @@ class EditorApp {
             }
         }
         return blocks
+    }
+
+    /// Which document lines the renderer collapses into a single boxed row —
+    /// the same blocks `tableRenderMap` will draw, without paying to render them.
+    /// The scroll math and mouse mapping need this because they otherwise count a
+    /// long table row as the several rows its raw text would wrap to, drifting
+    /// further with every table until the cursor scrolls off screen entirely.
+    private func collapsedTableLines() -> Set<Int> {
+        guard state.document.selectionRange == nil,
+              state.pendingEdit == nil,
+              state.syntaxHighlighter == nil,
+              state.wordWrap else { return [] }
+        let cursorLine = state.document.cursorLine
+        var out = Set<Int>()
+        for b in collectTableBlocks() {
+            let block = b.start..<b.end
+            guard !block.contains(cursorLine) || state.cursorInBlockHandle else { continue }
+            out.formUnion(block)
+        }
+        return out
     }
 
     /// Map of line index -> styled table-row string. Blocks containing the cursor

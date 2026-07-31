@@ -124,20 +124,46 @@ enum PlatformTerminal {
         guard isatty(STDIN_FILENO) == 1, isatty(STDOUT_FILENO) == 1 else { return [:] }
         fflush(stdout)
         var result: [String: Int] = [:]
-        for s in strings {
-            // Home, draw the glyph, ask where the cursor landed.
-            let query = "\u{1B}[H\(s)\u{1B}[6n"
-            _ = query.withCString { write(STDOUT_FILENO, $0, strlen($0)) }
-            guard let reply = readCPRReply(timeoutMs: 150),
-                  let col = parseCPRColumn(reply) else {
-                break   // A silent terminal aborts probing; keep what we have.
+        // Batch the queries: the terminal answers each CSI 6n in order, so a
+        // whole chunk costs one round-trip instead of one per glyph. Round-trip
+        // latency dominates (and is what made startup visibly stall, worst over
+        // ssh / tmux), so this is the difference between milliseconds and
+        // hundreds of them on a document full of emoji.
+        let chunkSize = 32
+        var index = 0
+        outer: while index < strings.count {
+            let chunk = Array(strings[index..<min(index + chunkSize, strings.count)])
+            index += chunk.count
+            // Home, draw the glyph, ask where the cursor landed — once per glyph,
+            // all in a single write.
+            let query = chunk.map { "\u{1B}[H\($0)\u{1B}[6n" }.joined()
+            writeAll(query)
+            for s in chunk {
+                guard let reply = readCPRReply(timeoutMs: 150),
+                      let col = parseCPRColumn(reply) else {
+                    break outer   // A silent terminal aborts probing; keep what we have.
+                }
+                let width = col - 1
+                if width == 1 || width == 2 { result[s] = width }
             }
-            let width = col - 1
-            if width == 1 || width == 2 { result[s] = width }
         }
         // Wipe the probe row; the caller draws a full frame next anyway.
-        _ = "\u{1B}[H\u{1B}[2J".withCString { write(STDOUT_FILENO, $0, strlen($0)) }
+        writeAll("\u{1B}[H\u{1B}[2J")
         return result
+    }
+
+    /// write(2) until the whole string is out — a batched probe query is big
+    /// enough that a short write is possible.
+    private static func writeAll(_ s: String) {
+        let bytes = Array(s.utf8)
+        var offset = 0
+        while offset < bytes.count {
+            let n = bytes.withUnsafeBytes { buf -> Int in
+                write(STDOUT_FILENO, buf.baseAddress!.advanced(by: offset), buf.count - offset)
+            }
+            if n <= 0 { return }
+            offset += n
+        }
     }
 
     /// Block (bounded by `timeoutMs`) for a `…R`-terminated CPR reply on stdin.

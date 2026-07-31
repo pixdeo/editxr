@@ -61,6 +61,51 @@ final class DisplayWidthTests: XCTestCase {
         XCTAssertEqual(displayWidth("✓"), 1)
     }
 
+    // MARK: - On-disk cache (so a second run probes nothing and starts instantly)
+
+    /// Redirect the cache at a temp file and run `body`, restoring the real path.
+    private func withTempCache(_ body: (String) throws -> Void) rethrows {
+        let real = GlyphWidthCache.path
+        let temp = NSTemporaryDirectory() + "editxr-widths-\(UUID().uuidString).json"
+        GlyphWidthCache.path = temp
+        defer {
+            GlyphWidthCache.path = real
+            try? FileManager.default.removeItem(atPath: temp)
+        }
+        try body(temp)
+    }
+
+    func testCachedWidthsSurviveAcrossRuns() {
+        withTempCache { _ in
+            registerMeasuredWidths(["⚠️": 2, "★": 2])
+            GlyphWidthCache.save()
+            resetMeasuredWidths()                      // simulate a fresh launch
+            XCTAssertFalse(hasMeasuredWidth("⚠️"))
+            GlyphWidthCache.load()
+            XCTAssertTrue(hasMeasuredWidth("⚠️"), "cached glyphs need no re-probe")
+            XCTAssertEqual(displayWidth("⚠️"), 2)
+            XCTAssertEqual(displayWidth("★"), 2)
+        }
+    }
+
+    func testCacheFromAnotherTerminalIsIgnored() {
+        withTempCache { path in
+            let stale = #"{"terminal":"TERM=some-other-terminal","widths":{"★":2}}"#
+            try? stale.write(toFile: path, atomically: true, encoding: .utf8)
+            GlyphWidthCache.load()
+            XCTAssertFalse(hasMeasuredWidth("★"), "widths measured elsewhere aren't ours")
+            XCTAssertEqual(displayWidth("★"), 1, "falls back to the heuristic")
+        }
+    }
+
+    func testCorruptCacheIsIgnored() {
+        withTempCache { path in
+            try? "not json".write(toFile: path, atomically: true, encoding: .utf8)
+            GlyphWidthCache.load()
+            XCTAssertEqual(displayWidth("★"), 1)
+        }
+    }
+
     func testParseCPRColumn() {
         XCTAssertEqual(PlatformTerminal.parseCPRColumn("\u{1B}[1;3R"), 3)
         XCTAssertEqual(PlatformTerminal.parseCPRColumn("\u{1B}[24;2R"), 2)

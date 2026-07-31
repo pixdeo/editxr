@@ -27,6 +27,13 @@ if arguments.contains("--probe-widths") {
         let h = s.first.map { displayWidth($0) } ?? 0
         print("  \(s)       \(m)         \(h)")
     }
+    // Refresh the on-disk cache from this fresh run, so the flag doubles as
+    // "re-calibrate" after changing a terminal setting that alters emoji width.
+    var fresh: [Character: Int] = [:]
+    for (s, w) in measured { if let c = s.first { fresh[c] = w } }
+    registerMeasuredWidths(fresh)
+    GlyphWidthCache.save()
+    print("cache: \(GlyphWidthCache.path)")
     exit(0)
 }
 

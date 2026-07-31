@@ -997,6 +997,22 @@ class EditorState {
         lastViewportWidth = width
     }
 
+    /// Document lines the renderer draws as exactly one row regardless of their
+    /// length — table rows, which become a single boxed row. Scroll math and
+    /// mouse mapping count raw-wrapped rows, so without this a 300-character
+    /// table row is counted as four rows but drawn as one, and everything below
+    /// the table drifts: the cursor scrolls out of view and clicks land on the
+    /// wrong line. Refreshed by the app each frame (see `collapsedTableLines`).
+    private(set) var singleRowLines: Set<Int> = []
+
+    func setSingleRowLines(_ lines: Set<Int>) { singleRowLines = lines }
+
+    /// How many rows line `index` actually occupies on screen.
+    private func visualRowCount(lineIndex: Int, width: Int) -> Int {
+        if singleRowLines.contains(lineIndex) { return 1 }
+        return wrapLineForNavigation(document.lines[lineIndex], width: width).count
+    }
+
     // MARK: - Mouse selection
 
     /// Start a selection at the document cell under a viewport press. `row` is
@@ -1035,6 +1051,13 @@ class EditorState {
         let target = scrollOffset + max(0, visualRow)
         var visual = 0
         for li in 0..<lineCount {
+            // A collapsed (boxed) table row owns exactly one row; the click can't
+            // be mapped inside its raw text, so land at the row's start.
+            if singleRowLines.contains(li) {
+                if target == visual { return CursorPosition(line: li, column: 0) }
+                visual += 1
+                continue
+            }
             let segs = wrapLineForNavigation(document.lines[li], width: max(1, viewportWidth))
             if target < visual + segs.count {
                 let seg = segs[target - visual]
@@ -1175,8 +1198,10 @@ class EditorState {
     private func visualLineForCursor(viewportWidth: Int) -> Int {
         var visualLine = 0
         for i in 0..<document.cursorLine {
-            visualLine += wrappedLineCount(document.lines[i], width: viewportWidth)
+            visualLine += visualRowCount(lineIndex: i, width: viewportWidth)
         }
+        // A collapsed row is drawn whole: the cursor sits on its single row.
+        if singleRowLines.contains(document.cursorLine) { return visualLine }
         let currentLine = document.lines[document.cursorLine]
         let segments = wrapLineForNavigation(currentLine, width: viewportWidth)
         var segmentIndex = 0
@@ -1196,8 +1221,8 @@ class EditorState {
     
     private func countVisualLines(viewportWidth: Int) -> Int {
         var total = 0
-        for line in document.lines {
-            total += wrappedLineCount(line, width: viewportWidth)
+        for i in 0..<document.lines.count {
+            total += visualRowCount(lineIndex: i, width: viewportWidth)
         }
         return total
     }
