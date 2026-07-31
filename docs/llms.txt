@@ -1,6 +1,6 @@
 # editxr
 
-> A WYSIWYG Markdown editor for the terminal. AI-assisted, 100% Swift, zero dependencies. macOS and Linux. Open source (MIT).
+> A WYSIWYG Markdown editor for the terminal. AI-assisted, 100% Swift, zero dependencies. macOS, Linux and Windows. Open source (MIT).
 
 editxr renders Markdown live as you type — headings, lists, tables, and code are
 styled in place in the terminal buffer, not in a split preview. The line under the
@@ -10,10 +10,13 @@ the change as an inline diff before it lands.
 ## What it does
 - Live Markdown rendering in the terminal (WYSIWYG): headings, emphasis, lists, task lists, tables, blockquotes, code blocks, and YAML frontmatter.
 - AI section editing: select a section, describe a change, and accept or reject it as a red/green inline diff. No chat thread; nothing is applied without approval.
+- Obsidian-style linking: `[[wikilinks]]` and `[](file.md)` links render collapsed and open in a tab (Ctrl+]), with fuzzy file search (Ctrl+O) and back-navigation (Ctrl+[).
+- Docked sidebars: a live outline of the document's headings, or a file explorer for the folder you opened.
 - Bring your own model: LM Studio (local), OpenAI, OpenRouter, or an offline mock that needs no backend.
 - 12 themes, light or dark, chosen from a command palette.
 - Incremental find, HTML export, syntax highlighting, word wrap, and per-file cursor memory.
-- Native Swift binary with no runtime dependencies. Runs on macOS 12+ and Linux.
+- Tables that stay aligned: glyph widths are measured from the live terminal, so emoji and ambiguous-width symbols don't break the columns.
+- Native Swift binary with no runtime dependencies. Runs on macOS 12+, Linux, and Windows 10+.
 
 ## Install
 - One line (downloads the prebuilt binary for your platform, falls back to source): `curl -fsSL https://raw.githubusercontent.com/pixdeo/editxr/main/install.sh | bash`
@@ -22,6 +25,7 @@ the change as an inline diff before it lands.
   - macOS universal (signed & notarised): editxr-<version>-macos-universal.zip
   - Linux x86_64 (static musl, no dependencies): editxr-<version>-linux-x86_64.tar.gz
   - Linux aarch64 (static musl, no dependencies): editxr-<version>-linux-aarch64.tar.gz
+  - Windows x64 (self-contained zip, also runs on Windows-on-ARM): editxr-<version>-windows-x64.zip
 
 ## Links
 - Website: https://editxr.org

@@ -216,9 +216,10 @@ Settings (theme, appearance, provider, keys) persist to
   editor toward an Obsidian-like workspace, in order of difficulty: (1) tabs for
   multiple open files ✅; (2) recursive directory scan with a fuzzy quick-switcher
   (`Ctrl+O`) ✅; (3) navigable `[text](path)` and `[[wikilinks]]` that open in a
-  tab; (4) a sidebar file list (`editxr ./folder` opens a folder); (5) a live
-  backlinks panel (a link graph re-indexed on save). Prerequisite for the
-  sidebar/panels: extract a **render compositor** so regions render into their
+  tab ✅; (4) a sidebar file list (`editxr ./folder` opens a folder) ✅, with a
+  docked heading outline alongside it; (5) a live backlinks panel (a link graph
+  re-indexed on save). Prerequisite for the
+  backlinks panel: extract a **render compositor** so regions render into their
   own width and compose horizontally (the ANSI/display-width splicing primitive
   already exists in `spliceVisible`), instead of each renderer assuming it owns
   the full content width.
@@ -226,14 +227,12 @@ Settings (theme, appearance, provider, keys) persist to
   PageDown selection is wired, but Terminal.app and iTerm2 bind those to their
   own scrollback by default, so the app never receives them. Add an alternative
   keybinding for page selection that terminals don't intercept.
-- [ ] **Windows support.** editxr is POSIX-only today (`termios`, `ioctl`,
-  signals, `/dev/tty`). Porting it means putting those behind a small platform
-  layer with a Windows console backend (`GetConsoleMode` / VT processing). If you
-  want to take it on, [`PORTING_TO_WINDOWS.md`](PORTING_TO_WINDOWS.md) maps every
-  blocker to its Windows replacement, with a file:line table and a work
-  checklist.
-- [ ] **Homebrew tap.** Publish `pixdeo/homebrew-tap` with the formula so
-  `brew install pixdeo/tap/editxr` works.
+- [x] **Windows support.** Shipped in 1.4.0: the POSIX primitives (`termios`,
+  `ioctl`, signals, `/dev/tty`) live behind a platform layer with a Windows
+  console backend (`GetConsoleMode` / VT processing).
+  [`PORTING_TO_WINDOWS.md`](PORTING_TO_WINDOWS.md) documents the port and what
+  is still open (clipboard tools).
+- [x] **Homebrew tap.** `brew install pixdeo/tap/editxr` works.
 - [ ] **Inline image rendering.** Draw Markdown images (`![alt](pic.png)`)
   directly in the editor using terminal graphics protocols (iTerm2 inline
   images / Kitty graphics / Sixel), with a block-character fallback for
