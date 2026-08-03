@@ -1,5 +1,16 @@
 import Foundation
 
+/// A detail-pane line that already carries its styling. Escape sequences make
+/// `String.count` meaningless, so the visible column count travels with it.
+struct PreviewLine {
+    let styled: String
+    let width: Int
+
+    static func plain(_ text: String) -> PreviewLine {
+        PreviewLine(styled: text, width: text.displayWidth)
+    }
+}
+
 struct PaletteCommand {
     let title: String
     let shortcut: String
@@ -16,6 +27,14 @@ struct PaletteCommand {
     /// child commands on demand, so the panel can also flatten them for a global
     /// search across levels and refresh live markers.
     var submenu: (() -> [PaletteCommand])? = nil
+    /// Detail-pane content for this row, produced on demand while it is selected
+    /// and fitted to the pane width it is handed. Only wide levels (live search)
+    /// draw it; everywhere else it is ignored.
+    var preview: ((Int) -> [PreviewLine])? = nil
+    /// Words this row matched, marked in the title so a hit shows *why* it is a
+    /// hit — the reason is often a word the query only reached through a repair
+    /// (an accent dropped, a typo, two words run together).
+    var matches: [TextMatch] = []
     let action: () -> Void
 
     /// Whether arrow navigation / activation can land on this row.
@@ -53,8 +72,22 @@ final class CommandPanel {
     private var generate: () -> [PaletteCommand] = { [] }
     private var query: String = ""
     private var selectedIndex: Int = 0
+    /// When set, typing runs this instead of fuzzy-filtering `commands`: the
+    /// provider returns the rows for the current query. Vault search needs it
+    /// because its candidates are the whole index, not a fixed row list.
+    private var liveQuery: ((String) -> [PaletteCommand])?
+    /// Rows for the last live query. `filteredCommands` is read several times per
+    /// keystroke (selection, activation, render), and the provider shouldn't run
+    /// once per read.
+    private var liveCache: (query: String, rows: [PaletteCommand])?
+    /// Detail-pane lines for the current selection, keyed by query + row.
+    private var previewCache: (key: String, lines: [PreviewLine])?
+
+    /// Levels that spread across the screen and can show a detail pane. Live
+    /// search is the only one today.
+    private var isWideLevel: Bool { liveQuery != nil }
     // Nav stack of parent menus, for submenu push/pop.
-    private var stack: [(title: String, generate: () -> [PaletteCommand], commands: [PaletteCommand], query: String, selectedIndex: Int)] = []
+    private var stack: [(title: String, generate: () -> [PaletteCommand], commands: [PaletteCommand], query: String, selectedIndex: Int, live: ((String) -> [PaletteCommand])?)] = []
 
     var onStateChanged: (() -> Void)?
 
@@ -77,6 +110,24 @@ final class CommandPanel {
         self.commands = generate()
         self.title = title
         self.stack = []
+        self.liveQuery = nil
+        self.liveCache = nil
+    }
+
+    /// Set the root to a live-search level: every keystroke re-runs `query` and
+    /// the rows it returns replace the list. Otherwise it behaves like any other
+    /// browsing level — arrows move, Enter activates, Esc closes.
+    func setLiveRoot(title: String, query provider: @escaping (String) -> [PaletteCommand]) {
+        self.generate = { [] }
+        self.commands = []
+        self.title = title
+        self.stack = []
+        self.liveQuery = provider
+        self.liveCache = nil
+        self.query = ""
+        self.state = .browsing
+        resetSelection()
+        onStateChanged?()
     }
 
     func show() {
@@ -90,6 +141,8 @@ final class CommandPanel {
     func hide() {
         state = .hidden
         stack = []
+        liveQuery = nil
+        liveCache = nil
         onStateChanged?()
     }
 
@@ -97,11 +150,13 @@ final class CommandPanel {
 
     /// Push a submenu, keeping the current level on the stack to return to.
     func push(title: String, generate: @escaping () -> [PaletteCommand]) {
-        stack.append((self.title, self.generate, self.commands, query, selectedIndex))
+        stack.append((self.title, self.generate, self.commands, query, selectedIndex, liveQuery))
         self.title = title
         self.generate = generate
         self.commands = generate()
         query = ""
+        liveQuery = nil          // a submenu is a normal fuzzy-filtered level
+        liveCache = nil
         state = .browsing
         resetSelection()
         onStateChanged?()
@@ -114,6 +169,8 @@ final class CommandPanel {
         commands = parent.commands
         query = parent.query
         selectedIndex = parent.selectedIndex
+        liveQuery = parent.live
+        liveCache = nil
         state = .browsing
         onStateChanged?()
     }
@@ -135,6 +192,12 @@ final class CommandPanel {
     }
 
     private var filteredCommands: [PaletteCommand] {
+        if let liveQuery {
+            if let cached = liveCache, cached.query == query { return cached.rows }
+            let rows = liveQuery(query)
+            liveCache = (query, rows)
+            return rows
+        }
         guard !query.isEmpty else { return commands }
         // While searching, flatten the whole subtree (descending into submenus)
         // so a command nested a level down still shows up and runs in place.
@@ -334,6 +397,28 @@ final class CommandPanel {
     // Box geometry: "│" border (1) + left pad (2) + content + right pad (2) + "│" border (1).
     private let borderWidth = 1
     private let padX = 2
+    /// Screen columns kept clear on each side of a wide level. Must stay above 2
+    /// so the drop shadow drawn to the right of the box still lands on screen.
+    private static let wideMargin = 4
+    /// Columns the " │ " separator takes between the two split columns.
+    private static let gutterWidth = 3
+    /// Rows kept clear under a wide level: one screen margin plus the row the
+    /// drop shadow lands on.
+    private static let wideBottomMargin = 2
+
+    /// Fixed top row for a wide level. Sitting a little above centre reads as a
+    /// search field rather than a dialog, and never moves.
+    static func wideTop(height: Int) -> Int {
+        max(2, height / 8)
+    }
+
+    /// Content rows a wide level always draws, however many results there are.
+    /// Constant per terminal size: a box that resized on every keystroke is what
+    /// made the previous layout unusable.
+    static func wideContentRows(height: Int) -> Int {
+        let chrome = 4 + 3 + 2   // header rows + footer rows + the two borders
+        return max(1, height - wideTop(height: height) - wideBottomMargin - chrome)
+    }
 
     /// Returns the box positioned on screen. `lines` are the box only (visible
     /// width == `width` field), so the caller can composite them over the document.
@@ -341,14 +426,19 @@ final class CommandPanel {
         guard isVisible else { return nil }
         guard width > 24 && height > 8 else { return nil }
 
-        let boxWidth = min(60, max(40, width - 10))
+        // A live-search level spreads to the screen, keeping a margin wide enough
+        // for the drop shadow; ordinary menus stay a narrow centred box.
+        let wide = isWideLevel && width >= 80 && height >= 20
+        let boxWidth = wide ? max(40, width - Self.wideMargin * 2)
+                            : min(60, max(40, width - 10))
         let left = max(0, (width - boxWidth) / 2)
         let contentWidth = boxWidth - borderWidth * 2 - padX * 2
 
         let content: [String]
         switch state {
         case .browsing:
-            content = renderBrowsing(boxWidth: boxWidth, contentWidth: contentWidth, height: height)
+            content = renderBrowsing(boxWidth: boxWidth, contentWidth: contentWidth,
+                                     height: height, wide: wide)
         case .input(let field):
             content = renderInput(field, boxWidth: boxWidth, contentWidth: contentWidth)
         case .oauth(let url, let message):
@@ -363,7 +453,10 @@ final class CommandPanel {
 
         // Wrap the content rows in a rounded border.
         let lines = [borderRow(boxWidth: boxWidth, top: true)] + content + [borderRow(boxWidth: boxWidth, top: false)]
-        let top = max(0, (height - lines.count) / 2)
+        // A wide level is anchored near the top like Spotlight: the search field
+        // must not shift as results come and go. Everything else stays centred.
+        let top = wide ? Self.wideTop(height: height)
+                       : max(0, (height - lines.count) / 2)
         return (top: top, left: left, width: boxWidth, lines: lines)
     }
 
@@ -374,14 +467,30 @@ final class CommandPanel {
         return "\(Theme.accent)\(lead)\(mid)\(tail)\(Theme.reset)"
     }
 
-    private func renderBrowsing(boxWidth: Int, contentWidth: Int, height: Int) -> [String] {
+    private func renderBrowsing(boxWidth: Int, contentWidth: Int, height: Int, wide: Bool) -> [String] {
         let cmds = filteredCommands
         let nested = !stack.isEmpty
 
         let header = 4   // top pad + title + search + blank
         let footer = 3   // blank + hint + bottom pad
-        // Leave room for the two border rows plus a small screen margin.
-        let maxRows = max(1, min(cmds.isEmpty ? 1 : cmds.count, height - 6 - header - footer))
+
+        // Split geometry: results on the left, the selected note on the right.
+        // Below the threshold the detail pane would squeeze both columns, so the
+        // level falls back to the ordinary single-column list.
+        let split = wide && contentWidth >= 72
+        let listWidth = split ? max(32, min(contentWidth * 45 / 100, 64)) : contentWidth
+        let previewWidth = split ? contentWidth - listWidth - Self.gutterWidth : 0
+
+        // A wide level reserves the same rows every keystroke and pads the gap;
+        // a narrow menu still shrinks to its content.
+        let maxRows: Int
+        if wide {
+            maxRows = Self.wideContentRows(height: height)
+        } else {
+            let available = max(1, height - 6 - header - footer)
+            maxRows = max(1, min(cmds.isEmpty ? 1 : cmds.count, available))
+        }
+        let preview = split ? previewLines(width: previewWidth, limit: maxRows) : []
 
         var start = 0
         if selectedIndex >= maxRows {
@@ -397,23 +506,54 @@ final class CommandPanel {
         lines.append(textRow("Search: \(query)", color: Theme.statusBarText, cursor: true, contentWidth: contentWidth, boxWidth: boxWidth))
         lines.append(blankRow(boxWidth: boxWidth))
 
-        if cmds.isEmpty {
-            lines.append(textRow("No matching commands", color: Theme.textMuted, cursor: false, contentWidth: contentWidth, boxWidth: boxWidth))
-        } else {
-            for i in start..<end {
-                if cmds[i].isSpacer {
-                    lines.append(blankRow(boxWidth: boxWidth))
-                } else if cmds[i].isHeader {
-                    lines.append(headerRow(cmds[i].title, contentWidth: contentWidth, boxWidth: boxWidth))
-                } else {
-                    lines.append(commandRow(cmds[i], selected: i == selectedIndex, contentWidth: contentWidth, boxWidth: boxWidth))
+        if !split {
+            if cmds.isEmpty {
+                lines.append(textRow("No matching commands", color: Theme.textMuted, cursor: false, contentWidth: contentWidth, boxWidth: boxWidth))
+            } else {
+                for i in start..<end {
+                    lines.append(listRow(cmds[i], selected: i == selectedIndex,
+                                         contentWidth: contentWidth, boxWidth: boxWidth))
                 }
+            }
+        } else {
+            for row in 0..<maxRows {
+                let i = start + row
+                let cell: (styled: String, bg: String) = i < end
+                    ? listCell(cmds[i], selected: i == selectedIndex, width: listWidth)
+                    : (String(repeating: " ", count: listWidth), Theme.statusBarBg)
+                let detail = row < preview.count ? preview[row] : PreviewLine.plain("")
+                lines.append(splitRow(left: cell.styled, leftBg: cell.bg,
+                                      right: detail, rightWidth: previewWidth,
+                                      contentWidth: contentWidth, boxWidth: boxWidth))
             }
         }
 
         lines.append(blankRow(boxWidth: boxWidth))
         lines.append(textRow(hint, color: Theme.textMuted, cursor: false, contentWidth: contentWidth, boxWidth: boxWidth))
         lines.append(blankRow(boxWidth: boxWidth))                                              // bottom pad
+        return lines
+    }
+
+    /// One full-width list row: spacer, header, or command.
+    private func listRow(_ cmd: PaletteCommand, selected: Bool, contentWidth: Int, boxWidth: Int) -> String {
+        if cmd.isSpacer { return blankRow(boxWidth: boxWidth) }
+        if cmd.isHeader { return headerRow(cmd.title, contentWidth: contentWidth, boxWidth: boxWidth) }
+        return commandRow(cmd, selected: selected, contentWidth: contentWidth, boxWidth: boxWidth)
+    }
+
+    /// Detail-pane lines for the selected row, padded/truncated to `width`.
+    /// Cached per (query, selection) so moving the cursor doesn't re-read the
+    /// note on every repaint.
+    private func previewLines(width: Int, limit: Int) -> [PreviewLine] {
+        let cmds = filteredCommands
+        guard selectedIndex >= 0, selectedIndex < cmds.count,
+              let provider = cmds[selectedIndex].preview else { return [] }
+
+        let key = "\(query)\u{0}\(selectedIndex)\u{0}\(width)\u{0}\(limit)"
+        if let cached = previewCache, cached.key == key { return cached.lines }
+
+        let lines = Array(provider(width).prefix(limit))
+        previewCache = (key, lines)
         return lines
     }
 
@@ -471,6 +611,60 @@ final class CommandPanel {
         return frame(styled, innerVisible: label.displayWidth, bg: Theme.statusBarBg, boxWidth: boxWidth)
     }
 
+    /// A list cell for the split layout: exactly `width` visible columns of
+    /// styled text, plus the background the whole cell (and its padding) uses.
+    private func listCell(_ cmd: PaletteCommand, selected: Bool, width: Int) -> (styled: String, bg: String) {
+        if cmd.isSpacer {
+            return (String(repeating: " ", count: width), Theme.statusBarBg)
+        }
+        if cmd.isHeader {
+            let label = truncate(cmd.title.uppercased(), to: width)
+            let pad = String(repeating: " ", count: max(0, width - label.displayWidth))
+            return ("\(Theme.textMuted)\(label)\(pad)", Theme.statusBarBg)
+        }
+        let shortcut = cmd.shortcut
+        let titleAvail = max(1, width - (shortcut.isEmpty ? 0 : shortcut.displayWidth + 1))
+        let title = truncate(cmd.title, to: titleAvail)
+        let minGap = shortcut.isEmpty ? 0 : 1
+        let gap = max(minGap, width - title.displayWidth - shortcut.displayWidth)
+        let bg = selected ? Theme.selectionBg : Theme.statusBarBg
+        let titleColor = selected ? Theme.selectionFg : Theme.statusBarText
+        let shortcutColor = selected ? Theme.selectionFg : Theme.textMuted
+        let marked = CommandPanel.markMatches(title, cmd: cmd, base: "\(bg)\(titleColor)", selected: selected)
+        let styled = "\(titleColor)\(marked)\(String(repeating: " ", count: gap))\(shortcutColor)\(shortcut)"
+        // The cell must fill its column exactly, or the separator drifts.
+        let overflow = title.displayWidth + gap + shortcut.displayWidth
+        let tail = String(repeating: " ", count: max(0, width - overflow))
+        return (styled + tail, bg)
+    }
+
+    /// Mark the words a row matched. An unmatched row is untouched, so this
+    /// costs nothing outside the search panel.
+    ///
+    /// The mark wears the selection's colours on an ordinary row; on the
+    /// selected row — which already wears them — it swaps back to the panel
+    /// background, so the word stands out the same way either side of the
+    /// highlight.
+    static func markMatches(_ text: String, cmd: PaletteCommand, base: String, selected: Bool) -> String {
+        guard !cmd.matches.isEmpty else { return text }
+        let style = selected
+            ? "\(Theme.statusBarBg)\(Theme.accent)\(Theme.bold)"
+            : "\(Theme.selectionBg)\(Theme.selectionFg)"
+        return MatchHighlighter.mark(text, matches: cmd.matches, base: base, style: style)
+    }
+
+    /// A results row beside its detail pane, separated by a muted rule. The
+    /// selection highlight stops at the separator so the note stays readable.
+    private func splitRow(left: String, leftBg: String,
+                          right: PreviewLine, rightWidth: Int,
+                          contentWidth: Int, boxWidth: Int) -> String {
+        let detailPad = String(repeating: " ", count: max(0, rightWidth - right.width))
+        let inner = "\(left)"
+            + "\(Theme.statusBarBg)\(Theme.textMuted) │ "
+            + "\(Theme.statusBarText)\(right.styled)\(Theme.statusBarBg)\(detailPad)"
+        return frame(inner, innerVisible: contentWidth, bg: leftBg, boxWidth: boxWidth)
+    }
+
     private func commandRow(_ cmd: PaletteCommand, selected: Bool, contentWidth: Int, boxWidth: Int) -> String {
         let shortcut = cmd.shortcut
         let titleAvail = max(1, contentWidth - (shortcut.isEmpty ? 0 : shortcut.displayWidth + 1))
@@ -484,7 +678,8 @@ final class CommandPanel {
         let bg = selected ? Theme.selectionBg : Theme.statusBarBg
         let titleColor = selected ? Theme.selectionFg : Theme.statusBarText
         let shortcutColor = selected ? Theme.selectionFg : Theme.textMuted
-        let styled = "\(titleColor)\(title)\(gapSpaces)\(shortcutColor)\(shortcut)"
+        let marked = CommandPanel.markMatches(title, cmd: cmd, base: "\(bg)\(titleColor)", selected: selected)
+        let styled = "\(titleColor)\(marked)\(gapSpaces)\(shortcutColor)\(shortcut)"
         let visible = title.displayWidth + gap + shortcut.displayWidth
         return frame(styled, innerVisible: visible, bg: bg, boxWidth: boxWidth)
     }

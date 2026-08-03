@@ -68,6 +68,13 @@ class EditorApp {
     /// doesn't re-scan the vault every frame. nil value = name didn't resolve.
     /// Invalidated whenever the set of open/known files changes.
     private var wikiURICache: [String: String?] = [:]
+    /// Which folder counts as the vault, plus its search / index preferences.
+    /// App-global: one vault across every tab.
+    private let vault = Vault()
+    /// Full-text index over the vault, built in the background.
+    private let vaultIndex = VaultIndex()
+    /// Previous index state, so completion can be announced exactly once.
+    private var lastVaultIndexState: VaultIndexState = .idle
     private var inputLoop: AnyObject?
     /// Set once the terminal proves it won't answer CSI 6n (not a tty, or silent),
     /// so later file opens skip probing instead of stalling on the poll timeout.
@@ -219,9 +226,380 @@ class EditorApp {
         ]
 
         cmds.append(.spacer)
+        cmds.append(.header("Vault"))
+        cmds += vaultMenuCommands()
+
+        cmds.append(.spacer)
         cmds.append(submenuCommand("Theme & appearance") { [weak self] in self?.themeMenuCommands() ?? [] })
 
         return cmds
+    }
+
+    // MARK: - Vault menus
+
+    /// The Vault group: search, marking a folder as the vault, and everything
+    /// else nested one level down so the root palette stays short.
+    private func vaultMenuCommands() -> [PaletteCommand] {
+        return [
+            PaletteCommand(title: "Search vault", shortcut: "^K", keepsOpen: true) { [weak self] in
+                self?.openVaultSearch()
+            },
+            PaletteCommand(title: "Use this folder as vault", shortcut: "") { [weak self] in
+                self?.useCurrentFolderAsVault()
+            },
+            submenuCommand("Vault settings") { [weak self] in self?.vaultSettingsCommands() ?? [] },
+        ]
+    }
+
+    /// Everything vault-scoped: which folder, the recents, how search behaves,
+    /// and what the index still needs before it can run.
+    private func vaultSettingsCommands() -> [PaletteCommand] {
+        let root = vaultRoot()
+        let status = EmbedderFactory.status(for: vault.backend, semanticSearch: vault.semanticSearch)
+        var cmds: [PaletteCommand] = []
+
+        cmds.append(.header("Vault — \(Vault.displayPath(root))"))
+        cmds.append(PaletteCommand(title: "Set vault folder…", shortcut: vault.isExplicit ? "set" : "auto") { [weak self] in
+            guard let self = self else { return }
+            self.commandPanel?.beginInput(prompt: "Vault folder", value: Vault.displayPath(root), isSecret: false) { [weak self] value in
+                self?.setVaultRoot(value)
+            }
+        })
+        cmds.append(PaletteCommand(title: "Use this folder as vault", shortcut: "") { [weak self] in
+            self?.useCurrentFolderAsVault()
+        })
+        if vault.isExplicit {
+            cmds.append(PaletteCommand(title: "Clear vault — follow the open file", shortcut: "") { [weak self] in
+                self?.setVaultRoot(nil)
+            })
+        }
+        if !vault.recents.isEmpty {
+            cmds.append(submenuCommand("Recent vaults") { [weak self] in self?.recentVaultCommands() ?? [] })
+        }
+
+        cmds.append(.spacer)
+        cmds.append(.header("Search"))
+        cmds.append(toggleCommand("Semantic search", vault.semanticSearch ? "on" : "off") { [weak self] in
+            guard let self = self else { return }
+            self.vault.setSemanticSearch(!self.vault.semanticSearch)
+        })
+        cmds.append(submenuCommand("Embedding backend — \(vault.backend.displayName)") { [weak self] in
+            self?.embedBackendCommands() ?? []
+        })
+        cmds.append(toggleCommand("Include .txt files", vault.includeText ? "on" : "off") { [weak self] in
+            guard let self = self else { return }
+            self.vault.setIncludeText(!self.vault.includeText)
+        })
+        cmds.append(PaletteCommand(title: "Max results", shortcut: "\(vault.maxResults)") { [weak self] in
+            guard let self = self else { return }
+            self.commandPanel?.beginInput(prompt: "Max results (1–50)", value: "\(self.vault.maxResults)", isSecret: false) { [weak self] value in
+                if let n = Int(value.trimmingCharacters(in: .whitespaces)) { self?.vault.setMaxResults(n) }
+            }
+        })
+
+        cmds.append(.spacer)
+        cmds.append(.header("Index"))
+        cmds.append(.header("Text: \(vaultIndex.state.detail)"))
+        cmds.append(.header("Semantic: \(status.detail)"))
+        cmds.append(PaletteCommand(title: "Reindex now", shortcut: "") { [weak self] in
+            self?.rebuildVaultIndex(announce: true)
+            self?.commandPanel?.hide()
+        })
+        if vaultIndex.isReady {
+            cmds.append(PaletteCommand(title: "Clear index", shortcut: "") { [weak self] in
+                self?.vaultIndex.clear()
+                self?.showToast("Vault index cleared")
+            })
+        }
+        if case .ready = status {} else {
+            cmds.append(submenuCommand("Set up semantic search") { [weak self] in self?.embedSetupCommands() ?? [] })
+        }
+        cmds.append(toggleCommand("Index on open", vault.indexOnOpen ? "on" : "off") { [weak self] in
+            guard let self = self else { return }
+            self.vault.setIndexOnOpen(!self.vault.indexOnOpen)
+        })
+
+        return cmds
+    }
+
+    private func recentVaultCommands() -> [PaletteCommand] {
+        let current = vaultRoot()
+        return vault.recents.map { path in
+            PaletteCommand(title: Vault.displayPath(path),
+                           shortcut: path == current ? "current" : "") { [weak self] in
+                self?.setVaultRoot(path)
+            }
+        }
+    }
+
+    private func embedBackendCommands() -> [PaletteCommand] {
+        EmbedBackend.allCases.map { backend in
+            let status = EmbedderFactory.status(for: backend, semanticSearch: true)
+            let mark = vault.backend == backend ? "current" : status.label
+            return PaletteCommand(title: backend.displayName, shortcut: mark, keepsOpen: true) { [weak self] in
+                self?.vault.setBackend(backend)
+            }
+        }
+    }
+
+    /// The consent step. Nothing is downloaded until it is picked here, and the
+    /// panel states the size, the destination and where the notes end up.
+    private func embedSetupCommands() -> [PaletteCommand] {
+        let status = EmbedderFactory.status(for: vault.backend, semanticSearch: vault.semanticSearch)
+        var cmds: [PaletteCommand] = []
+
+        switch status {
+        case .needsDownload(let asset):
+            cmds.append(.header("Semantic search needs a model"))
+            cmds.append(.header("\(asset.displayName) · \(asset.parameters)"))
+            cmds.append(.header("Download \(asset.sizeLabel) → \(Vault.displayPath(ModelAsset.directory))"))
+            cmds.append(.header("Runs locally — nothing leaves your machine"))
+            cmds.append(.spacer)
+            cmds.append(PaletteCommand(title: "Download now", shortcut: "soon") { [weak self] in
+                self?.showToast("Model download lands with the index engine")
+            })
+        case .needsSystemAssets:
+            cmds.append(.header("Semantic search uses the model built into macOS"))
+            cmds.append(.header("First use downloads system assets, managed by Apple"))
+            cmds.append(.spacer)
+            cmds.append(PaletteCommand(title: "Enable", shortcut: "soon") { [weak self] in
+                self?.showToast("Asset download lands with the index engine")
+            })
+        case .unavailable(let why):
+            cmds.append(.header(why))
+            cmds.append(.spacer)
+        case .disabled:
+            cmds.append(.header("Semantic search is off"))
+            cmds.append(.spacer)
+            cmds.append(PaletteCommand(title: "Turn semantic search on", shortcut: "") { [weak self] in
+                self?.vault.setSemanticSearch(true)
+            })
+        case .ready(let what):
+            cmds.append(.header(what))
+            cmds.append(.spacer)
+        }
+
+        cmds.append(PaletteCommand(title: "Not now — use text search", shortcut: "") { [weak self] in
+            self?.commandPanel?.hide()
+            self?.render()
+        })
+        cmds.append(PaletteCommand(title: "Never for this vault", shortcut: "") { [weak self] in
+            self?.vault.setBackend(.off)
+            self?.commandPanel?.hide()
+            self?.showToast("Semantic search off — text search only")
+        })
+        return cmds
+    }
+
+    // MARK: - Vault actions
+
+    /// Point the vault at the folder holding the file in the active tab.
+    private func useCurrentFolderAsVault() {
+        setVaultRoot(Vault.containingDirectory(of: state.filePath))
+    }
+
+    /// Switch (or clear) the vault root. Every path-derived cache is keyed off
+    /// the root, so they all have to go — same set `openFile` invalidates.
+    private func setVaultRoot(_ path: String?) {
+        vault.setRoot(path)
+        fileCommandCache = nil
+        fileTreeScanCache = nil
+        wikiURICache.removeAll()
+        collapsedFolders.removeAll()
+        sidebarSelection = 0
+        commandPanel?.hide()
+        showToast(vault.isExplicit ? "Vault: \(Vault.displayPath(vaultRoot()))"
+                                   : "Vault follows the open file")
+        rebuildVaultIndex(announce: false)
+    }
+
+    /// Re-render on every index update, and announce the finish. A small vault
+    /// indexes faster than the progress stride, so completion is the only signal
+    /// the user would otherwise get — and "did it index?" is the whole question.
+    private func vaultIndexStateChanged() {
+        let previous = lastVaultIndexState
+        lastVaultIndexState = vaultIndex.state
+        if case .ready(let chunks, let files) = vaultIndex.state, previous != vaultIndex.state {
+            if chunks == 0 {
+                showToast("Vault empty — no notes found in \(Vault.displayPath(vaultRoot()))")
+            } else {
+                showToast("Vault indexed · \(chunks) sections in \(files) files")
+            }
+        } else {
+            render()
+        }
+    }
+
+    /// Rescan the vault. Runs in the background; progress shows on the status bar.
+    private func rebuildVaultIndex(announce: Bool) {
+        vaultIndex.build(root: vaultRoot(), includeText: vault.includeText)
+        if announce { showToast("Reindexing \(Vault.displayPath(vaultRoot()))") }
+    }
+
+    /// Ctrl+K. Ranked sections update on every keystroke; picking one opens the
+    /// note at that heading.
+    private func openVaultSearch() {
+        guard let panel = commandPanel else { return }
+        guard vaultIndex.isReady else {
+            // Nothing to search yet — say what's happening instead of an empty list.
+            if case .indexing = vaultIndex.state {
+                showToast("Still indexing — \(vaultIndex.state.detail)")
+            } else {
+                rebuildVaultIndex(announce: true)
+            }
+            return
+        }
+        panel.show()
+        panel.setLiveRoot(title: "Search \(Vault.displayPath(vaultRoot()))") { [weak self] query in
+            self?.vaultResultCommands(for: query) ?? []
+        }
+        render()
+    }
+
+    /// Rows for one keystroke of the vault search. BM25 over the inverted index
+    /// runs in well under a millisecond, so this is safe to call per character.
+    private func vaultResultCommands(for query: String) -> [PaletteCommand] {
+        guard !VaultIndex.tokenize(query).isEmpty else {
+            return [.header(vaultIndex.state.detail), .header("Type to search")]
+        }
+        let hits = vaultIndex.search(query, limit: vault.maxResults)
+        guard !hits.isEmpty else { return [.header("No matches")] }
+
+        // What the query actually resolved to, so both panes can mark it. After
+        // a repair these are not the words the user typed — that is the point:
+        // seeing "Transformer" lit up is how you know the typo was forgiven.
+        let matches = vaultIndex.matchTokens(for: query)
+
+        let root = vaultRoot()
+        return hits.map { hit in
+            let full = absolutePath(root + "/" + hit.chunk.path)
+            // No shortcut column: the title already opens with the note name, and
+            // the detail pane carries the path. Every spare column goes to the trail.
+            return PaletteCommand(
+                title: sanitizedLabel(hit.chunk.title),
+                shortcut: "",
+                preview: { [weak self] paneWidth in
+                    self?.vaultPreviewLines(path: full, from: hit.chunk.line,
+                                            width: paneWidth, matches: matches) ?? []
+                },
+                matches: matches
+            ) { [weak self] in
+                guard let self = self else { return }
+                self.openFile(full)
+                self.state.goToLine(hit.chunk.line, viewportHeight: self.lastContentHeight)
+                self.render()
+            }
+        }
+    }
+
+    /// The note itself, from the matched section onward, rendered as Markdown for
+    /// the search panel's detail pane — the same styling the editor applies, so
+    /// the preview looks like the document you're about to open.
+    private func vaultPreviewLines(path: String, from line: Int, width: Int,
+                                   matches: [TextMatch] = []) -> [PreviewLine] {
+        guard width > 0 else { return [] }
+
+        // An already-open tab may hold unsaved edits; prefer them over disk.
+        let lines: [String]
+        if let open = states.first(where: { absolutePath($0.filePath) == path }) {
+            lines = open.document.lines
+        } else if let text = try? String(contentsOfFile: path, encoding: .utf8) {
+            lines = text.components(separatedBy: "\n")
+        } else {
+            return [fit("(could not read \((path as NSString).lastPathComponent))",
+                        style: Theme.textMuted, width: width)]
+        }
+
+        var out = [fit(previewHeaderLabel(path: path, width: width), style: Theme.accent, width: width),
+                   PreviewLine.plain("")]
+
+        let start = max(0, min(line, max(0, lines.count - 1)))
+        var inCode = false
+        for raw in lines[start...].prefix(VaultIndex.previewLines) {
+            out.append(previewLine(sanitizedLabel(raw), width: width, inCode: &inCode))
+        }
+        guard !matches.isEmpty else { return out }
+        // Marking runs over the styled line, not the raw one, so the note keeps
+        // its Markdown styling and only the matched words change colour.
+        return out.map {
+            PreviewLine(styled: MatchHighlighter.mark($0.styled, matches: matches,
+                                                      base: "\(Theme.statusBarBg)\(Theme.statusBarText)",
+                                                      style: "\(Theme.selectionBg)\(Theme.selectionFg)"),
+                        width: $0.width)
+        }
+    }
+
+    /// Path label for the detail pane's header. Relative to the vault when the
+    /// note lives there — the panel title already names the root — and the bare
+    /// file name otherwise. Ellipsized from the left, because the end of a path
+    /// is what identifies the note; trimming the right would drop the name.
+    private func previewHeaderLabel(path: String, width: Int) -> String {
+        let root = vaultRoot()
+        var label = relativeToRoot(path, root: root)
+        if label == path { label = (path as NSString).lastPathComponent }
+        guard label.displayWidth > width else { return label }
+
+        var tail = ""
+        var used = 1                       // the leading ellipsis
+        for char in label.reversed() {
+            let w = displayWidth(char)
+            if used + w > width { break }
+            tail.insert(char, at: tail.startIndex)
+            used += w
+        }
+        return "…" + tail
+    }
+
+    /// Test seam for the search panel's detail pane (see AGENTS.md).
+    func vaultPreviewLinesForTest(path: String, from line: Int, width: Int,
+                                  matches: [TextMatch] = []) -> [PreviewLine] {
+        vaultPreviewLines(path: path, from: line, width: width, matches: matches)
+    }
+
+    /// One Markdown line styled for the detail pane. Block kinds get their editor
+    /// styling; everything else runs through the shared inline renderer.
+    private func previewLine(_ raw: String, width: Int, inCode: inout Bool) -> PreviewLine {
+        if MarkdownLineParser.isCodeBlockDelimiter(raw) {
+            inCode.toggle()
+            return fit(raw, style: Theme.textMuted, width: width)
+        }
+        if inCode {
+            return fit(raw, style: Theme.string, width: width)
+        }
+        let spans = MarkdownLineParser.parse(raw)
+        if let heading = spans.first, headingStyle(heading.kind) != "" {
+            return fit(heading.content, style: headingStyle(heading.kind), width: width)
+        }
+        if let quote = parseQuoteLine(raw) {
+            let (styled, w) = renderInlineCell(quote.content, base: Theme.textMuted)
+            return clamp("\(Theme.textMuted)│ \(styled)", width: w + 2, to: width)
+        }
+        if let list = parseListLine(raw) {
+            let marker: String
+            switch list.kind {
+            case .bullet: marker = "•"
+            case .todo(.checked): marker = "☑"
+            case .todo(.partial): marker = "◐"
+            case .todo(.unchecked): marker = "☐"
+            }
+            let (styled, w) = renderInlineCell(list.content, base: "")
+            let prefix = "\(list.indent)\(Theme.accent)\(marker) "
+            let prefixWidth = list.indent.displayWidth + marker.displayWidth + 1
+            return clamp("\(prefix)\(Theme.statusBarText)\(styled)", width: prefixWidth + w, to: width)
+        }
+        let (styled, w) = renderInlineCell(raw, base: "")
+        return clamp(styled, width: w, to: width)
+    }
+
+    /// Plain text in one style, fitted to the pane.
+    private func fit(_ text: String, style: String, width: Int) -> PreviewLine {
+        clamp("\(style)\(text)", width: text.displayWidth, to: width)
+    }
+
+    /// Trim a styled run to the pane, keeping its visible width honest.
+    private func clamp(_ styled: String, width: Int, to maxWidth: Int) -> PreviewLine {
+        guard width > maxWidth else { return PreviewLine(styled: styled, width: width) }
+        return PreviewLine(styled: truncateToWidth(styled, width: maxWidth), width: maxWidth)
     }
 
     // MARK: - Keyboard shortcuts help
@@ -252,6 +630,7 @@ class EditorApp {
             row("Save", "^S"),
             row("Export to HTML", "^E"),
             row("Follow link under cursor", "^]"),
+            row("Vault", "^K"),
             row("Command palette", "^P"),
             row("Quit", "^Q / ^D"),
             .spacer, .header("Tabs"),
@@ -404,6 +783,11 @@ class EditorApp {
         enterAlternateScreen()
         GlyphWidthCache.load()   // usually leaves nothing to probe → instant start
         calibrateGlyphWidths()
+
+        // Progress and completion both land here; rendering is cheap and the
+        // index reports at a coarse stride, so this can't thrash the screen.
+        vaultIndex.onChange = { [weak self] in self?.vaultIndexStateChanged() }
+        if vault.indexOnOpen { rebuildVaultIndex(announce: false) }
 
         inputLoop = PlatformTerminal.startInputLoop { [weak self] data in
             self?.handleInput(data)
@@ -804,6 +1188,8 @@ class EditorApp {
                 needsRender = true
             case Key.ctrlO:
                 openQuickSwitcher()
+            case Key.ctrlK:
+                openVaultSearch()
             case Key.ctrlRightBracket:
                 followLinkUnderCursor()
             case Key.tab:
@@ -1178,15 +1564,9 @@ class EditorApp {
     /// `displayWidth` does.
     private func focusFlatten(_ styled: String, t: Double) -> String {
         var out = Theme.fadedFg(t)
-        var inEscape = false
-        for ch in styled {
-            if ch == "\u{1B}" {
-                inEscape = true
-            } else if inEscape {
-                if ch.isLetter { inEscape = false }
-            } else {
-                out.append(ch)
-            }
+        var scanner = ANSIScanner()
+        for ch in styled where !scanner.consume(ch) {
+            out.append(ch)
         }
         return out + Theme.reset
     }
@@ -1385,14 +1765,9 @@ class EditorApp {
         var out = ""
 
         func readEscape() -> String {
-            var esc = ""
-            while i < n {
-                let c = chars[i]
-                esc.append(c)
-                i += 1
-                if c.isLetter { break }
-            }
-            return esc
+            let end = ansiEscapeEnd(chars, from: i)
+            defer { i = end }
+            return String(chars[i..<end])
         }
 
         while i < n && col < at {
@@ -1416,7 +1791,11 @@ class EditorApp {
         while i < n && shaded < count {
             let c = chars[i]
             if c == "\u{1B}" {
-                _ = readEscape()   // drop original styling inside the shadow
+                // The shadow repaints these columns, so the original styling is
+                // dropped — but keep tracking it, or the tail of the line
+                // resumes with a stale colour.
+                let esc = readEscape()
+                if esc == Theme.reset { active = "" } else { active += esc }
             } else {
                 out.append(c)
                 shaded += displayWidth(c)
@@ -1445,14 +1824,9 @@ class EditorApp {
         var out = ""
 
         func readEscape() -> String {
-            var esc = ""
-            while i < n {
-                let c = chars[i]
-                esc.append(c)
-                i += 1
-                if c.isLetter { break }
-            }
-            return esc
+            let end = ansiEscapeEnd(chars, from: i)
+            defer { i = end }
+            return String(chars[i..<end])
         }
 
         while i < n && col < at {
@@ -2323,13 +2697,11 @@ class EditorApp {
         while i < s.endIndex {
             let c = s[i]
             if c == "\u{1B}" {
-                out.append(c)
-                var j = s.index(after: i)
-                while j < s.endIndex {
-                    let cj = s[j]
-                    out.append(cj)
+                var scanner = ANSIScanner()
+                var j = i
+                while j < s.endIndex, scanner.consume(s[j]) {
+                    out.append(s[j])
                     j = s.index(after: j)
-                    if cj.isLetter { break }
                 }
                 i = j
                 continue
@@ -2898,51 +3270,56 @@ class EditorApp {
         var result = ""
         var visibleCount = 0
         var skipped = 0
-        var inEscape = false
-        var currentEscape = ""
-        
+        var scanner = ANSIScanner()
+
         for char in str {
-            if char == "\u{1B}" {
-                inEscape = true
-                currentEscape = String(char)
-            } else if inEscape {
-                currentEscape.append(char)
-                if char.isLetter {
-                    inEscape = false
-                    // Keep every escape, even those in the skipped-left region:
-                    // they take no columns and carry the colour/style state that
-                    // the first visible character needs. Dropping them made focus
-                    // mode's faded colours vanish under horizontal scroll.
-                    result.append(currentEscape)
-                    currentEscape = ""
-                }
+            if scanner.consume(char) {
+                // Keep every escape, even those in the skipped-left region:
+                // they take no columns and carry the colour/style state that
+                // the first visible character needs. Dropping them made focus
+                // mode's faded colours vanish under horizontal scroll.
+                result.append(char)
             } else {
+                // Columns, not characters: counting a CJK glyph or an emoji as
+                // one column made the scrolled row drift left by a cell per
+                // wide glyph, so `width` columns of text no longer matched the
+                // viewport.
+                let w = displayWidth(char)
                 if skipped < scrollX {
-                    skipped += 1
-                } else if visibleCount < width {
-                    result.append(char)
-                    visibleCount += 1
-                } else {
-                    result.append(Theme.reset)
+                    if skipped + w <= scrollX {
+                        skipped += w
+                        continue
+                    }
+                    // A wide glyph straddles the left edge: half of it is off
+                    // screen. Draw the on-screen half as spaces rather than
+                    // shifting the whole row by a column.
+                    let partial = skipped + w - scrollX
+                    skipped = scrollX
+                    guard visibleCount + partial <= width else {
+                        result += Theme.reset
+                        break
+                    }
+                    result += String(repeating: " ", count: partial)
+                    visibleCount += partial
+                    continue
+                }
+                guard w == 0 || visibleCount + w <= width else {
+                    result += Theme.reset
                     break
                 }
+                result.append(char)
+                visibleCount += w
             }
         }
-        
+
         return result
     }
     
     private func padToWidth(_ str: String, width: Int) -> String {
         var visibleCount = 0
-        var inEscape = false
-        for char in str {
-            if char == "\u{1B}" {
-                inEscape = true
-            } else if inEscape {
-                if char.isLetter { inEscape = false }
-            } else {
-                visibleCount += displayWidth(char)
-            }
+        var scanner = ANSIScanner()
+        for char in str where !scanner.consume(char) {
+            visibleCount += displayWidth(char)
         }
         if visibleCount >= width {
             return str
@@ -2953,17 +3330,11 @@ class EditorApp {
     private func truncateToWidth(_ str: String, width: Int) -> String {
         var result = ""
         var visibleCount = 0
-        var inEscape = false
-        
+        var scanner = ANSIScanner()
+
         for char in str {
-            if char == "\u{1B}" {
-                inEscape = true
+            if scanner.consume(char) {
                 result.append(char)
-            } else if inEscape {
-                result.append(char)
-                if char.isLetter {
-                    inEscape = false
-                }
             } else {
                 let w = displayWidth(char)
                 if visibleCount + w <= width {
@@ -3155,6 +3526,11 @@ class EditorApp {
 
         if let toast = toastText {
             append("\(Theme.fadedStatusFg(toastOpacity))\(toast)\(Theme.statusBarText)", visible: toast.count)
+        }
+        // Vault indexing runs in the background; the status line is the only
+        // place it surfaces, so it stays until the build finishes.
+        if let indexing = vaultIndex.state.statusText {
+            append("\(Theme.textMuted)\(indexing)\(Theme.statusBarText)", visible: indexing.count)
         }
         if state.viewMode == .raw {
             append("[RAW]", visible: 5)
@@ -3358,12 +3734,12 @@ class EditorApp {
         })
     }
 
-    /// The directory the quick-switcher scans: the folder of the first open file,
-    /// falling back to the working directory.
+    /// The directory the quick-switcher, wikilinks and vault search all work
+    /// against: an explicitly configured vault, else the nearest ancestor with a
+    /// marker folder, else the folder of the first open file (the pre-vault
+    /// behaviour, so nothing changes until a vault is actually set).
     private func vaultRoot() -> String {
-        let first = states.first?.filePath ?? "."
-        let dir = URL(fileURLWithPath: first).standardizedFileURL.deletingLastPathComponent().path
-        return dir.isEmpty ? FileManager.default.currentDirectoryPath : dir
+        vault.root(fileHint: states.first?.filePath ?? ".")
     }
 
     /// Open `path` in a tab: focus it if already open, otherwise add a new tab.

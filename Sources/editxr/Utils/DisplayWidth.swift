@@ -122,15 +122,9 @@ extension StringProtocol {
     /// Visible terminal width, ignoring ANSI escape sequences.
     var displayWidth: Int {
         var width = 0
-        var inEscape = false
-        for ch in self {
-            if ch == "\u{1B}" {
-                inEscape = true
-            } else if inEscape {
-                if ch.isLetter { inEscape = false }
-            } else {
-                width += editxr_displayWidth(ch)
-            }
+        var scanner = ANSIScanner()
+        for ch in self where !scanner.consume(ch) {
+            width += editxr_displayWidth(ch)
         }
         return width
     }

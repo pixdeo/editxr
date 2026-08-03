@@ -225,6 +225,43 @@ final class RenderTests: XCTestCase {
             "unaligned tables of different widths should not all match")
     }
 
+    // MARK: - Horizontal scroll over wide glyphs
+
+    /// Build an app with word wrap off and the view scrolled `scrollX` columns.
+    private func scrolledRow(_ content: String, scrollX: Int, width: Int) -> String {
+        let tmp = NSTemporaryDirectory() + "editxr-test-\(UUID().uuidString).md"
+        try? content.write(toFile: tmp, atomically: true, encoding: .utf8)
+        let state = EditorState(filePath: tmp)
+        state.wordWrap = false
+        state.blockMode = false
+        state.document.cursorLine = 1
+        state.document.cursorColumn = 0
+        state.scrollX = scrollX
+        let app = EditorApp(states: [state])
+        let rows = app.renderContentLinesForTest(width: width, height: 20)
+        return RenderTests.plain(rows[0])
+    }
+
+    func testHorizontalScrollSkipsColumnsNotCharacters() {
+        // Four columns of scroll must drop two wide glyphs, not four of them:
+        // counting characters made the row drift left one cell per CJK glyph.
+        let row = scrolledRow("你好世界 tail\nsegunda linea", scrollX: 4, width: 20)
+        XCTAssertFalse(row.contains("你") || row.contains("好"),
+                       "columns 0–3 should be scrolled off: '\(row)'")
+        XCTAssertTrue(row.trimmingCharacters(in: .whitespaces).hasPrefix("世界 tail"),
+                      "expected the row to start at column 4: '\(row)'")
+    }
+
+    func testHorizontalScrollPadsGlyphStraddlingTheLeftEdge() {
+        // Scrolling to an odd column cuts 好 in half. The half glyph must not be
+        // drawn (it would print two columns and shift the row); its on-screen
+        // column becomes a space instead.
+        let row = scrolledRow("你好世界 tail\nsegunda linea", scrollX: 3, width: 20)
+        XCTAssertFalse(row.contains("好"), "half-scrolled glyph should not be drawn: '\(row)'")
+        XCTAssertTrue(row.trimmingCharacters(in: .whitespaces).hasPrefix("世界 tail"),
+                      "expected the row to resume at 世: '\(row)'")
+    }
+
     /// Rows are padded to a fixed `gutter + width` budget, so the narrowest row
     /// reveals the true budget; any row exceeding it overflows the terminal.
     private func assertRowsWithinBudget(_ content: String, width: Int,

@@ -21,6 +21,7 @@ enum Key {
     static let ctrlE: Character = "\u{05}"
     static let ctrlSlash: Character = "\u{1F}"
     static let ctrlP: Character = "\u{10}"
+    static let ctrlK: Character = "\u{0B}"   // Ctrl+K — vault
     static let ctrlT: Character = "\u{14}"
     static let enter: Character = "\r"
     static let backspace: Character = "\u{7f}"

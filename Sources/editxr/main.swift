@@ -37,8 +37,18 @@ if arguments.contains("--probe-widths") {
     exit(0)
 }
 
+// --vault <path> pins the vault root for this run, overriding the config. Its
+// value is a bare path, so it has to be pulled out before the file list is read.
+var vaultArgIndex: Int?
+if let i = arguments.firstIndex(of: "--vault"), i + 1 < arguments.count {
+    Vault.commandLineRoot = Vault.standardized(arguments[i + 1])
+    vaultArgIndex = i + 1
+}
+
 // Every non-flag argument is a file to open; the first one is focused.
-let filePaths = arguments.dropFirst().filter { !$0.hasPrefix("-") }
+let filePaths = arguments.enumerated()
+    .filter { $0.offset > 0 && $0.offset != vaultArgIndex && !$0.element.hasPrefix("-") }
+    .map(\.element)
 guard !filePaths.isEmpty else {
     print(AppInfo.helpText)
     exit(1)

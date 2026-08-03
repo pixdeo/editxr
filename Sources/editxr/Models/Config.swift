@@ -20,6 +20,16 @@ struct Config: Codable {
     var theme: String? = nil
     var appearance: String? = nil
 
+    // Vault. All optional with defaults, so a config written before vaults
+    // existed still decodes and keeps today's implicit behaviour.
+    var vaultPath: String? = nil            // nil = follow the open file's folder
+    var recentVaults: [String]? = nil       // most-recent-first, capped
+    var vaultSemanticSearch: Bool? = true
+    var vaultEmbedBackend: String? = nil    // EmbedBackend raw value
+    var vaultIncludeTxt: Bool? = true
+    var vaultIndexOnOpen: Bool? = true
+    var vaultMaxResults: Int? = 10
+
     var llmProvider: LLMProvider = .lmStudio
     var openRouterKey: String? = nil
     var openRouterModel: String? = nil

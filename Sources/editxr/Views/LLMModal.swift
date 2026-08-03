@@ -398,15 +398,11 @@ class LLMModal {
         
         var result = ""
         var visibleCount = 0
-        var inEscape = false
-        
+        var scanner = ANSIScanner()
+
         for char in str {
-            if char == "\u{1B}" {
-                inEscape = true
+            if scanner.consume(char) {
                 result.append(char)
-            } else if inEscape {
-                result.append(char)
-                if char.isLetter { inEscape = false }
             } else {
                 if visibleCount < width {
                     result.append(char)
@@ -423,15 +419,9 @@ class LLMModal {
     
     private func visibleLength(_ str: String) -> Int {
         var count = 0
-        var inEscape = false
-        for char in str {
-            if char == "\u{1B}" {
-                inEscape = true
-            } else if inEscape {
-                if char.isLetter { inEscape = false }
-            } else {
-                count += 1
-            }
+        var scanner = ANSIScanner()
+        for char in str where !scanner.consume(char) {
+            count += 1
         }
         return count
     }
