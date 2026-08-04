@@ -151,6 +151,14 @@ fails to compile (it uses the Command Line Tools toolchain):
 ./build.sh install         # release build + copy to /usr/local/bin/editxr
 ```
 
+`example-vault/` is a small linked note collection to try the vault features
+on — a handful of notes that reference each other, enough for `Ctrl+K` search
+and `[[wikilink]]` navigation to have somewhere to go:
+
+```bash
+swift run editxr --vault example-vault "example-vault/Home.md"
+```
+
 Requires macOS 12+ and a Swift 5.9+ toolchain. It also builds and runs on
 Linux and Windows (Swift 6+). On both, OpenAI OAuth sign-in is unavailable (the
 other LLM providers work as usual); on Windows, clipboard and terminal-theme
