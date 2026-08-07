@@ -65,7 +65,7 @@ This is a **test** with *markdown*.
   line you're editing stays plain text.
 - **Multi-file workspace.** Open files in tabs (`editxr a.md b.md`, or `Ctrl+O`
   to fuzzy-find any file in the folder tree). `Ctrl+N` cycles tabs, `Ctrl+[`
-  goes back to the previous file, `Ctrl+W` closes the tab. **New file…** in the
+  goes back to the previous file, `Ctrl+J` closes the tab. **New file…** in the
   command palette (`Ctrl+P`) creates a note — vault-relative, `.md` by default,
   missing folders included — and opens it in a tab.
 - **Navigable links.** `[text](file.md)` and Obsidian-style `[[wikilinks]]`
@@ -175,7 +175,7 @@ auto-detection also fall back for now.
 | `Ctrl+R` | Toggle rendered / raw view |
 | `Ctrl+O` | Open file (fuzzy quick-switcher) |
 | `Ctrl+N` | Next tab |
-| `Ctrl+W` | Close tab |
+| `Ctrl+J` | Close tab |
 | `Ctrl+]` | Follow link under cursor (or click a link) |
 | `Ctrl+[` / `Esc` | Back to the previous file |
 | `Ctrl+T` | Cycle task state (`[ ]` → `[*]` → `[x]`) |
@@ -187,7 +187,7 @@ auto-detection also fall back for now.
 | `Ctrl+G` | Find next match |
 | `Ctrl+C` / `Ctrl+X` / `Ctrl+V` | Copy / cut / paste (system clipboard) |
 | `Ctrl+U` / `Ctrl+Y` | Undo / Redo |
-| `Ctrl+H` / `⌥⌫` | Delete word backward |
+| `Ctrl+W` / `Ctrl+H` / `⌥⌫` | Delete word backward |
 | `Ctrl+/` | Keyboard shortcuts (searchable panel) |
 | Arrows / Shift+Arrows | Move / select |
 | Mouse | Wheel scrolls; click places the cursor (or follows a link); drag selects |

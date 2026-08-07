@@ -81,6 +81,14 @@ class EditorApp {
     private var widthProbingDisabled = false
     private var resizeWatch: AnyObject?
     private var arrowKeyParser = ArrowKeyParser()
+    /// A lone ESC byte held back briefly: escape sequences (arrows, Option+key,
+    /// paste markers) can be split across reads, and acting on the ESC alone
+    /// would misfire (e.g. jump to the previous tab) and leak the rest as text.
+    /// If more bytes arrive within the window they're re-joined with the ESC;
+    /// otherwise it fires as the plain Escape key.
+    private var pendingEscapeWork: DispatchWorkItem?
+    /// How long a lone ESC waits for the rest of a sequence, vim-style.
+    private static let escapeTimeout: TimeInterval = 0.05
     private let llmService = LLMService()
     private var llmModal: LLMModal?
     private let openAIOAuth = OpenAIOAuth()
@@ -186,7 +194,7 @@ class EditorApp {
             cmds += [
                 PaletteCommand(title: "Next tab", shortcut: "^N") { [weak self] in self?.switchTab(by: 1) },
                 PaletteCommand(title: "Back (previous file)", shortcut: "esc") { [weak self] in self?.goToPreviousTab() },
-                PaletteCommand(title: "Close tab", shortcut: "^W") { [weak self] in self?.closeActiveTab() },
+                PaletteCommand(title: "Close tab", shortcut: "^J") { [weak self] in self?.closeActiveTab() },
             ]
         }
 
@@ -996,13 +1004,38 @@ class EditorApp {
     }
 
     private func handleInput(_ data: Data) {
-        guard let string = String(data: data, encoding: .utf8) else { return }
+        guard var string = String(data: data, encoding: .utf8) else { return }
 
+        // Rejoin an ESC that arrived on its own with the bytes that follow it:
+        // together they form one escape sequence (arrow key, Option+key, …).
+        if pendingEscapeWork != nil {
+            pendingEscapeWork?.cancel()
+            pendingEscapeWork = nil
+            string = "\u{1B}" + string
+        }
+
+        // A lone ESC is ambiguous: the Escape key, or the start of a sequence
+        // the terminal split across reads. Hold it briefly and decide then.
+        if string == "\u{1B}" {
+            let work = DispatchWorkItem { [weak self] in
+                guard let self, self.pendingEscapeWork != nil else { return }
+                self.pendingEscapeWork = nil
+                self.processInput("\u{1B}")
+            }
+            pendingEscapeWork = work
+            DispatchQueue.main.asyncAfter(
+                deadline: .now() + EditorApp.escapeTimeout, execute: work)
+            return
+        }
+
+        processInput(string)
+    }
+
+    private func processInput(_ string: String) {
         // A pending quit (armed by quit() when there are unsaved changes) is
         // confirmed only by pressing a quit key again; any other key cancels it.
         if pendingQuit {
             let isQuitKey = string == String(Key.ctrlD) || string == String(Key.ctrlQ)
-                || (states.count == 1 && string == String(Key.ctrlW))
             if !isQuitKey {
                 pendingQuit = false
                 toastText = nil
@@ -1054,6 +1087,10 @@ class EditorApp {
                 render()
                 return
             }
+            // ESC-prefixed multi-byte input is an Alt/Option combo, not the
+            // Escape key — ignore it whole so it can't pop the panel and leak
+            // the trailing bytes into the query.
+            if string.first == Key.escape && string.count > 1 { return }
             for char in string {
                 if char == Key.ctrlP {
                     toggleCommandPanel()
@@ -1080,6 +1117,10 @@ class EditorApp {
                 for char in pasteContent where !char.isNewline { modal.handleCharacter(char) }
                 return
             }
+            // ESC-prefixed multi-byte input is an Alt/Option combo, not the
+            // Escape key — ignore it whole so it can't close the modal and
+            // leak the trailing bytes into the prompt.
+            if string.first == Key.escape && string.count > 1 { return }
             for char in string { handleLLMModalInput(char) }
             return
         }
@@ -1104,8 +1145,9 @@ class EditorApp {
 
         // A lone ESC byte is the Escape key — and Ctrl+[, which sends the same
         // byte. In the editor (no modal/panel/search open by this point) it goes
-        // "back" to the previously-focused tab. Escape sequences (arrows, mouse)
-        // arrive as ESC + more in one read, so they don't match this.
+        // "back" to the previously-focused tab. Escape sequences carry more
+        // bytes (re-joined by handleInput's brief hold if the terminal split
+        // them across reads), so they don't match this.
         if string == "\u{1B}" {
             goToPreviousTab()
             render()
@@ -1180,6 +1222,11 @@ class EditorApp {
                 state.searchNext()
                 needsRender = true
             case Key.ctrlW:
+                // Readline word delete — and what iTerm2's Natural Text Editing
+                // preset sends for Option+Backspace. It must never close a tab.
+                state.deleteWordBackward()
+                needsRender = true
+            case Key.ctrlJ:
                 closeActiveTab()
                 needsRender = true
             case Key.ctrlT:
@@ -1500,6 +1547,12 @@ class EditorApp {
     }
     var activeCursorLineForTest: Int { state.document.cursorLine }
     var activeFileForTest: String { state.filePath }
+
+    // Test hook: feed raw input through the real entry point (ESC reassembly
+    // included), so tests exercise the same path as terminal reads.
+    func handleInputForTest(_ s: String) { handleInput(Data(s.utf8)) }
+    var activeTabForTest: Int { activeTab }
+    var tabCountForTest: Int { states.count }
 
     private func gutterWidth() -> Int {
         // The gutter doubles as the configurable left margin.
@@ -4219,8 +4272,15 @@ class ArrowKeyParser {
                 state = .initial
                 return true
             }
+            // A second ESC starts a fresh sequence — stay in .escape for it.
+            if character == "\u{1B}" {
+                return true
+            }
+            // Anything else is an Alt/Option combo we don't bind (Option+F is
+            // ESC f, …). Swallow it; it must never land in the document as
+            // literal text.
             state = .initial
-            return false
+            return true
 
         case .ss3:
             state = .initial

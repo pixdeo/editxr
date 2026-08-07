@@ -18,6 +18,7 @@ enum Key {
     static let ctrlG: Character = "\u{07}"
     static let ctrlF: Character = "\u{06}"
     static let ctrlW: Character = "\u{17}"
+    static let ctrlJ: Character = "\u{0A}"   // distinct from Enter (\r): ICRNL is off
     static let ctrlE: Character = "\u{05}"
     static let ctrlSlash: Character = "\u{1F}"
     static let ctrlP: Character = "\u{10}"
