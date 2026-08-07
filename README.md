@@ -65,7 +65,9 @@ This is a **test** with *markdown*.
   line you're editing stays plain text.
 - **Multi-file workspace.** Open files in tabs (`editxr a.md b.md`, or `Ctrl+O`
   to fuzzy-find any file in the folder tree). `Ctrl+N` cycles tabs, `Ctrl+[`
-  goes back to the previous file, `Ctrl+W` closes the tab.
+  goes back to the previous file, `Ctrl+W` closes the tab. **New file…** in the
+  command palette (`Ctrl+P`) creates a note — vault-relative, `.md` by default,
+  missing folders included — and opens it in a tab.
 - **Navigable links.** `[text](file.md)` and Obsidian-style `[[wikilinks]]`
   render collapsed to their underlined title and open on `Ctrl+]` or a click —
   local files in a tab, `http(s)`/`mailto` in the browser. The raw form reveals

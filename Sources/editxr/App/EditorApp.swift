@@ -171,6 +171,8 @@ class EditorApp {
             // keepsOpen so activating it swaps the panel into the file switcher
             // (a fresh scan) instead of closing — the scan only runs on demand.
             PaletteCommand(title: "Open file", shortcut: "^O", keepsOpen: true) { [weak self] in self?.openQuickSwitcher() },
+            // keepsOpen so the panel can swap itself into the name prompt.
+            PaletteCommand(title: "New file…", shortcut: "", keepsOpen: true) { [weak self] in self?.promptNewFile() },
             PaletteCommand(title: "Follow link under cursor", shortcut: "^]") { [weak self] in self?.followLinkUnderCursor() },
             PaletteCommand(title: "Save", shortcut: "^S") { [weak self] in self?.state.save() },
             reloadCmd,
@@ -4083,6 +4085,46 @@ class EditorApp {
         case .off:
             break
         }
+    }
+
+    /// Ask for a name, then create that file and open it in a tab.
+    private func promptNewFile() {
+        guard let panel = commandPanel else { return }
+        panel.beginInput(prompt: "New file in \(Vault.displayPath(vaultRoot()))",
+                         value: "",
+                         isSecret: false) { [weak self] value in
+            self?.createFile(named: value)
+        }
+    }
+
+    /// Create the file `name` resolves to — making any missing folders on the
+    /// way — and open it. An existing file is opened, never overwritten.
+    private func createFile(named name: String) {
+        guard let path = NewFilePath.resolve(name, root: vaultRoot()) else { return }
+        let label = sanitizedLabel(Vault.displayPath(path))
+        let fm = FileManager.default
+
+        var isDir: ObjCBool = false
+        if fm.fileExists(atPath: path, isDirectory: &isDir) {
+            if isDir.boolValue {
+                showToast("\(label) is a folder")
+            } else {
+                openFile(path)
+                showToast("\(label) already existed — opened it")
+            }
+            return
+        }
+
+        do {
+            try fm.createDirectory(atPath: (path as NSString).deletingLastPathComponent,
+                                   withIntermediateDirectories: true)
+            try "".write(toFile: path, atomically: true, encoding: .utf8)
+        } catch {
+            showToast("Couldn't create \(label)")
+            return
+        }
+        openFile(path)
+        showToast("Created \(label)")
     }
 
     /// Open the quick-switcher: a fresh directory scan in the command panel.
