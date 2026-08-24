@@ -1015,14 +1015,60 @@ class EditorState {
 
     // MARK: - Mouse selection
 
+    /// Word characters for double-click selection: letters, digits, and
+    /// underscore, matching the word-movement commands so `some_var` selects
+    /// as one word.
+    private func isWordCharacter(_ c: Character) -> Bool {
+        c.isLetter || c.isNumber || c == "_"
+    }
+
     /// Start a selection at the document cell under a viewport press. `row` is
     /// 0-based within the text viewport, `col` 0-based within the content area
-    /// (right of the gutter). A press with no drag leaves no selection.
-    func mousePress(row: Int, col: Int, viewportWidth: Int) {
+    /// (right of the gutter). `clickCount` is the running count in the current
+    /// click sequence: 1 places the cursor and anchors a possible drag,
+    /// 2 selects the word under the cursor, 3 the whole line, and further
+    /// clicks keep alternating word / line. A press with no drag leaves no
+    /// selection.
+    func mousePress(row: Int, col: Int, viewportWidth: Int, clickCount: Int = 1) {
         let pos = documentPosition(visualRow: row, col: col, viewportWidth: viewportWidth)
         document.cursorLine = pos.line
         document.cursorColumn = pos.column
-        document.selectionAnchor = pos
+        if clickCount < 2 || pos.line >= document.lines.count {
+            document.selectionAnchor = pos
+            return
+        }
+        if clickCount % 2 == 0 {
+            selectWord(at: pos)
+        } else {
+            selectLine(at: pos.line)
+        }
+    }
+
+    /// Select the word under `pos` — the maximal run of characters with the
+    /// same word-ness as the clicked one (see `isWordCharacter`). A click on
+    /// whitespace has no word to select and just leaves the cursor.
+    private func selectWord(at pos: CursorPosition) {
+        let chars = Array(document.lines[pos.line])
+        guard pos.column < chars.count, !chars[pos.column].isWhitespace else {
+            document.selectionAnchor = pos
+            return
+        }
+        let isWord = isWordCharacter(chars[pos.column])
+        var start = pos.column
+        while start > 0 && isWordCharacter(chars[start - 1]) == isWord { start -= 1 }
+        var end = pos.column
+        while end < chars.count && isWordCharacter(chars[end]) == isWord { end += 1 }
+        document.selectionAnchor = CursorPosition(line: pos.line, column: start)
+        document.cursorLine = pos.line
+        document.cursorColumn = end
+    }
+
+    /// Select the whole line, from column 0 to its end (trailing newline
+    /// excluded).
+    private func selectLine(at line: Int) {
+        document.selectionAnchor = CursorPosition(line: line, column: 0)
+        document.cursorLine = line
+        document.cursorColumn = document.lines[line].count
     }
 
     /// Extend the in-progress mouse selection: move the cursor, keep the anchor.

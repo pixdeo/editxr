@@ -72,6 +72,9 @@ This is a **test** with *markdown*.
   render collapsed to their underlined title and open on `Ctrl+]` or a click —
   local files in a tab, `http(s)`/`mailto` in the browser. The raw form reveals
   when the cursor lands on the link, so it stays editable.
+- **Mouse-friendly selection.** Click to place the cursor or follow a link,
+  drag to select, double-click a word, triple-click a line (and keep clicking
+  to alternate between the two).
 - **AI section editing.** Rewrite the selection or current block with an LLM and
   review it as a red/green inline diff: `y` to accept, `n` to reject. Prompt
   history recalls with ↑/↓.
@@ -190,7 +193,7 @@ auto-detection also fall back for now.
 | `Ctrl+W` / `Ctrl+H` / `⌥⌫` | Delete word backward |
 | `Ctrl+/` | Keyboard shortcuts (searchable panel) |
 | Arrows / Shift+Arrows | Move / select |
-| Mouse | Wheel scrolls; click places the cursor (or follows a link); drag selects |
+| Mouse | Wheel scrolls; click places the cursor (or follows a link); drag selects; double-click selects a word, triple-click a line |
 | `Ctrl+←/→` | Move by word |
 | `Home` / `End` / `PgUp` / `PgDn` | Navigate |
 

@@ -89,6 +89,17 @@ class EditorApp {
     private var pendingEscapeWork: DispatchWorkItem?
     /// How long a lone ESC waits for the rest of a sequence, vim-style.
     private static let escapeTimeout: TimeInterval = 0.05
+    /// Monotonic token invalidating deferred link-follows: every new press or
+    /// keyboard input bumps it, so a stale scheduled follow never fires. A
+    /// single click on a link follows it only after the click window closes,
+    /// so the second press of a double-click selects the word instead.
+    private var linkFollowToken = 0
+    /// How long a mouse press stays part of the same multi-click sequence.
+    private static let mouseClickInterval: TimeInterval = 0.5
+    /// Last multi-click press (time + viewport cell) and the running count.
+    private var lastMouseClickTime: Date?
+    private var lastMouseClickCell: (row: Int, col: Int)?
+    private var mouseClickCount = 0
     private let llmService = LLMService()
     private var llmModal: LLMModal?
     private let openAIOAuth = OpenAIOAuth()
@@ -1056,12 +1067,18 @@ class EditorApp {
             render()
         }
 
-        // Mouse: wheel scrolls, click moves the cursor, click-drag selects.
-        // All mouse reports are consumed here so none leak into the editor.
+        // Mouse: wheel scrolls, click moves the cursor, click-drag selects,
+        // double/triple click select word/line. All mouse reports are consumed
+        // here so none leak into the editor.
         if let events = parseMouseEvents(string) {
             handleMouseEvents(events)
             return
         }
+
+        // Any keyboard input breaks a mouse multi-click sequence and cancels a
+        // deferred link-follow.
+        resetMouseClickSequence()
+        cancelPendingLinkFollow()
 
         if let panel = commandPanel, panel.isVisible {
             // Bracketed paste (e.g. an API key): feed the inner text to the
@@ -3681,8 +3698,57 @@ class EditorApp {
         return events
     }
 
+    // MARK: - Multi-click detection
+
+    /// The next click count for a left press at a viewport cell. A press more
+    /// than `mouseClickInterval` after the previous one, or outside a 1-cell
+    /// neighbourhood, starts a fresh sequence; otherwise the count advances
+    /// (1 → 2 → 3 → …). `time` is passed in so tests drive it deterministically.
+    func nextMouseClickCount(row: Int, col: Int, at time: Date = Date()) -> Int {
+        if let last = lastMouseClickTime,
+           time.timeIntervalSince(last) <= Self.mouseClickInterval,
+           let cell = lastMouseClickCell,
+           abs(cell.row - row) <= 1,
+           abs(cell.col - col) <= 1 {
+            mouseClickCount += 1
+        } else {
+            mouseClickCount = 1
+        }
+        lastMouseClickTime = time
+        lastMouseClickCell = (row, col)
+        return mouseClickCount
+    }
+
+    /// Any drag, wheel, or keyboard input breaks the multi-click sequence.
+    func resetMouseClickSequence() {
+        lastMouseClickTime = nil
+        lastMouseClickCell = nil
+        mouseClickCount = 0
+    }
+
+    /// Follow a link under the cursor if the click landed on one — deferred
+    /// past the click window so a double-click on a link selects its word
+    /// instead of opening the target on the first press.
+    private func scheduleLinkFollowIfNeeded() {
+        linkFollowToken += 1
+        let token = linkFollowToken
+        guard MarkdownLink.linkAt(line: state.document.currentLineText,
+                                  column: state.document.cursorColumn) != nil else { return }
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, token == self.linkFollowToken else { return }
+            self.followLinkUnderCursor()
+        }
+        DispatchQueue.main.asyncAfter(
+            deadline: .now() + Self.mouseClickInterval, execute: work)
+    }
+
+    private func cancelPendingLinkFollow() {
+        linkFollowToken += 1
+    }
+
     /// Apply a batch of mouse reports: wheel → scroll, left press → place cursor
-    /// and anchor, left drag (motion bit) → extend the selection.
+    /// and anchor, left drag (motion bit) → extend the selection. Consecutive
+    /// presses within the click window select word / line (double / triple).
     private func handleMouseEvents(_ events: [(button: Int, x: Int, y: Int, release: Bool)]) {
         let size = getTerminalSize()
         let gutter = gutterWidth()
@@ -3700,17 +3766,20 @@ class EditorApp {
             case 64: wheel -= 1                 // wheel up
             case 65: wheel += 1                 // wheel down
             case 0 where !e.release:            // left press
-                state.mousePress(row: row, col: col, viewportWidth: viewportWidth)
-                // A click that lands on a link follows it instead of just
-                // placing the cursor (links render as raw text, so the cursor
-                // column maps straight through).
-                if MarkdownLink.linkAt(line: state.document.currentLineText,
-                                       column: state.document.cursorColumn) != nil {
-                    followLinkUnderCursor()
-                    return
+                let clicks = nextMouseClickCount(row: row, col: col)
+                state.mousePress(row: row, col: col, viewportWidth: viewportWidth, clickCount: clicks)
+                // A single click that lands on a link follows it (links render
+                // as raw text, so the cursor column maps straight through);
+                // a multi-click cancels the follow and selects word/line.
+                if clicks == 1 {
+                    scheduleLinkFollowIfNeeded()
+                } else {
+                    cancelPendingLinkFollow()
                 }
                 changed = true
             case 32:                            // left drag (button 0 + motion)
+                resetMouseClickSequence()
+                cancelPendingLinkFollow()
                 state.mouseDrag(row: row, col: col, viewportWidth: viewportWidth)
                 changed = true
             default:
@@ -3719,6 +3788,8 @@ class EditorApp {
         }
 
         if wheel != 0 {
+            resetMouseClickSequence()
+            cancelPendingLinkFollow()
             state.scrollViewport(lines: wheel * 3, viewportHeight: viewportHeight, viewportWidth: viewportWidth)
             changed = true
         }
