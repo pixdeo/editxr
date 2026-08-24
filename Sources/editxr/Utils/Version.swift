@@ -12,6 +12,7 @@ enum AppInfo {
 
         Usage:
           \(name) <file>...       Open or create Markdown files (one tab each)
+          \(name) .               Open the folder with the file-explorer sidebar
           \(name) --vault <dir>   Use <dir> as the vault for this run
           \(name) --help          Show this help
           \(name) --version       Print the version

@@ -128,6 +128,12 @@ class EditorApp {
 
     init(states: [EditorState]) {
         self.states = states
+        // The file explorer opens with every folder collapsed. A launch that
+        // starts in files mode (`editxr .`) never goes through toggleSidebarMode,
+        // so seed the collapsed set here; toggling it on later re-collapses.
+        if states.contains(where: { $0.sidebarMode == .files }) {
+            collapsedFolders = allFolderPaths()
+        }
         // The welcome splash is only meaningful for a lone, empty document.
         showSplash = states.count == 1 && states[0].document.lines.allSatisfy { $0.isEmpty }
         for st in states {
@@ -1542,9 +1548,12 @@ class EditorApp {
     var sidebarSelectionForTest: Int { sidebarSelection }
     var sidebarFocusedForTest: Bool { sidebarFocused }
     func sidebarEntryCountForTest() -> Int { sidebarEntries().count }
-    func sidebarEntryForTest(_ i: Int) -> (text: String, isDir: Bool, path: String) {
-        let e = sidebarEntries()[i]; return (e.text, e.isDir, e.path)
+    func sidebarEntryForTest(_ i: Int) -> (text: String, isDir: Bool, isCollapsed: Bool, path: String) {
+        let e = sidebarEntries()[i]; return (e.text, e.isDir, e.isCollapsed, e.path)
     }
+    var activeSidebarModeForTest: SidebarMode { state.sidebarMode }
+    func sidebarModeForTabForTest(_ i: Int) -> SidebarMode { states[i].sidebarMode }
+    func toggleSidebarModeForTest(_ mode: SidebarMode) { toggleSidebarMode(mode) }
     var activeCursorLineForTest: Int { state.document.cursorLine }
     var activeFileForTest: String { state.filePath }
 
@@ -3805,6 +3814,7 @@ class EditorApp {
         } else {
             backStack.append(states[activeTab])
             let st = EditorState(filePath: path)
+            st.sidebarMode = state.sidebarMode   // sidebar mode is app-wide: new tabs inherit it
             st.onSavedIndicatorChanged = { [weak self] in self?.render() }
             states.append(st)
             activeTab = states.count - 1
@@ -3950,11 +3960,13 @@ class EditorApp {
     }
 
     /// One row in the docked sidebar, mode-agnostic. `line` is the heading line
-    /// (outline) and `path` the relative path (files); `isDir` flags a folder.
+    /// (outline) and `path` the relative path (files); `isDir` flags a folder
+    /// and `isCollapsed` marks a folder whose children are hidden (files mode).
     private struct SidebarEntry {
         let text: String
         let isCurrent: Bool
         let isDir: Bool
+        let isCollapsed: Bool
         let path: String
         let line: Int
     }
@@ -3984,6 +3996,12 @@ class EditorApp {
         return scan
     }
 
+    /// Every directory path in the project tree, so the explorer can open with
+    /// all folders collapsed. Pure tree shape over the (cached) scan.
+    private func allFolderPaths() -> Set<String> {
+        Set(FileTree.rows(paths: fileTreeScan(), collapsed: []).filter(\.isDir).map(\.path))
+    }
+
     /// Build the sidebar's row model for the active mode.
     private func sidebarEntries() -> [SidebarEntry] {
         switch state.sidebarMode {
@@ -3997,7 +4015,8 @@ class EditorApp {
                 let indent = String(repeating: "  ", count: max(0, it.level - 1))
                 let label = String(it.title.filter { $0 != "*" && $0 != "`" })
                 return SidebarEntry(text: indent + label, isCurrent: i == current,
-                                    isDir: false, path: "", line: it.line)
+                                    isDir: false, isCollapsed: false,
+                                    path: "", line: it.line)
             }
         case .files:
             let root = vaultRoot()
@@ -4008,7 +4027,8 @@ class EditorApp {
                 let icon = r.isDir ? (r.isCollapsed ? "▸ " : "▾ ") : ""
                 return SidebarEntry(text: indent + icon + r.name,
                                     isCurrent: !r.isDir && r.path == currentRel,
-                                    isDir: r.isDir, path: r.path, line: 0)
+                                    isDir: r.isDir, isCollapsed: r.isCollapsed,
+                                    path: r.path, line: 0)
             }
         }
     }
@@ -4060,10 +4080,17 @@ class EditorApp {
     }
 
     /// Toggle a sidebar mode from the palette, resetting selection/focus and
-    /// refreshing the project scan when switching the explorer on.
+    /// refreshing the project scan when switching the explorer on. The mode is
+    /// app-wide — every tab is kept in sync so switching files never hides the
+    /// sidebar — and a fresh explorer open starts with all folders collapsed.
     private func toggleSidebarMode(_ mode: SidebarMode) {
-        if mode == .files && state.sidebarMode != .files { fileTreeScanCache = nil }
+        if mode == .files && state.sidebarMode != .files {
+            fileTreeScanCache = nil
+            collapsedFolders = allFolderPaths()
+        }
         state.toggleSidebar(mode)
+        let result = state.sidebarMode
+        for st in states where st !== state { st.sidebarMode = result }
         sidebarSelection = 0
         if state.sidebarMode == .off { sidebarFocused = false }
     }

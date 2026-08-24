@@ -55,4 +55,15 @@ enum DirectoryScanner {
         }
         return results.sorted()
     }
+
+    /// The file to open when a directory is opened with no explicit file (e.g.
+    /// `editxr .`): a root-level README (any casing or extension) if one exists,
+    /// else the first editable file in scan order. Nil when the scan is empty.
+    static func primaryFile(in scan: [String]) -> String? {
+        if let readme = scan.first(where: { path in
+            guard !path.contains("/") else { return false }   // root level only
+            return (path as NSString).deletingPathExtension.lowercased() == "readme"
+        }) { return readme }
+        return scan.first
+    }
 }

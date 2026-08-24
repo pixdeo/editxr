@@ -6,6 +6,18 @@ import XCTest
 /// here we drive the focused-panel key routing.
 final class SidebarNavTests: XCTestCase {
 
+    /// The file explorer scans whatever the vault root resolves to — which, with
+    /// no root pinned, is the user's configured vault (~/.config/editxr). Pin it
+    /// to the temp project so these tests are hermetic (and fast) instead of
+    /// walking the real vault; restore the previous value afterwards.
+    private var savedCommandLineRoot: String?
+
+    override func tearDown() {
+        Vault.commandLineRoot = savedCommandLineRoot
+        savedCommandLineRoot = nil
+        super.tearDown()
+    }
+
     /// A small on-disk project so the file explorer has a real tree to scan.
     private func makeProject() -> String {
         let root = NSTemporaryDirectory() + "editxr-proj-\(UUID().uuidString)"
@@ -16,6 +28,8 @@ final class SidebarNavTests: XCTestCase {
         try? "y".write(toFile: root + "/src/util.swift", atomically: true, encoding: .utf8)
         try? "z".write(toFile: root + "/src/app/main.swift", atomically: true, encoding: .utf8)
         try? "g".write(toFile: root + "/docs/guide.md", atomically: true, encoding: .utf8)
+        if savedCommandLineRoot == nil { savedCommandLineRoot = Vault.commandLineRoot }
+        Vault.commandLineRoot = root
         return root
     }
 
@@ -80,14 +94,71 @@ final class SidebarNavTests: XCTestCase {
             folderIdx = i; break
         }
         let idx = try! XCTUnwrap(folderIdx)
+
+        // Folders start collapsed by default: expanding reveals the children…
         app.setSidebarSelectionForTest(idx)
+        app.sidebarKeyForTest("\u{1B}[C")     // expand (right)
+        let expanded = app.sidebarEntryCountForTest()
+        XCTAssertGreaterThan(expanded, count0, "expanding a folder reveals its children")
 
         app.sidebarKeyForTest("\u{1B}[D")     // collapse (left)
-        let collapsed = app.sidebarEntryCountForTest()
-        XCTAssertLessThan(collapsed, count0, "collapsing a folder hides its children")
+        XCTAssertEqual(app.sidebarEntryCountForTest(), count0, "collapsing restores the starting rows")
+    }
 
-        app.sidebarKeyForTest("\u{1B}[C")     // expand (right)
-        XCTAssertEqual(app.sidebarEntryCountForTest(), count0, "expanding restores them")
+    func testFoldersStartCollapsedByDefault() {
+        let app = filesApp()
+        // Only top-level rows are shown, and every folder is marked collapsed.
+        let n = app.sidebarEntryCountForTest()
+        XCTAssertGreaterThan(n, 0, "the project scan should show top-level entries")
+        for i in 0..<n {
+            let e = app.sidebarEntryForTest(i)
+            if e.isDir { XCTAssertTrue(e.isCollapsed, "\(e.path) should start collapsed") }
+        }
+    }
+
+    func testOpeningFileKeepsFileSidebarOn() {
+        let app = filesApp()
+        XCTAssertEqual(app.activeSidebarModeForTest, .files)
+        app.focusSidebarForTest()
+
+        // Reveal a folder, then open one of its files — that creates a new tab.
+        let n = app.sidebarEntryCountForTest()
+        var folderIdx: Int? = nil
+        for i in 0..<n where app.sidebarEntryForTest(i).isDir { folderIdx = i; break }
+        app.setSidebarSelectionForTest(try! XCTUnwrap(folderIdx))
+        app.sidebarKeyForTest("\u{1B}[C")     // expand
+
+        let m = app.sidebarEntryCountForTest()
+        var fileIdx: Int? = nil
+        for i in 0..<m where !app.sidebarEntryForTest(i).isDir {
+            if app.activeFileForTest.hasSuffix(app.sidebarEntryForTest(i).path) { continue }
+            fileIdx = i; break
+        }
+        let idx = try! XCTUnwrap(fileIdx, "expected a file different from the open README")
+        let wantPath = app.sidebarEntryForTest(idx).path
+        app.setSidebarSelectionForTest(idx)
+        app.sidebarKeyForTest("\r")
+
+        XCTAssertTrue(app.activeFileForTest.hasSuffix(wantPath), "opened \(app.activeFileForTest)")
+        XCTAssertEqual(app.activeSidebarModeForTest, .files,
+                       "opening a file must not hide the app-wide file sidebar")
+    }
+
+    func testToggleAppliesToEveryTab() {
+        let root = makeProject()
+        let a = EditorState(filePath: root + "/README.md")
+        let b = EditorState(filePath: root + "/src/a.swift")
+        a.sidebarMode = .off
+        b.sidebarMode = .off
+        let app = EditorApp(states: [a, b])
+
+        app.toggleSidebarModeForTest(.files)
+        XCTAssertEqual(app.sidebarModeForTabForTest(0), .files, "toggle applies to tab 0")
+        XCTAssertEqual(app.sidebarModeForTabForTest(1), .files, "toggle applies to tab 1")
+
+        app.toggleSidebarModeForTest(.files)   // toggle off again
+        XCTAssertEqual(app.sidebarModeForTabForTest(0), .off)
+        XCTAssertEqual(app.sidebarModeForTabForTest(1), .off)
     }
 
     func testEnterOnFileOpensIt() {

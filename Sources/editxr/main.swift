@@ -45,15 +45,20 @@ if let i = arguments.firstIndex(of: "--vault"), i + 1 < arguments.count {
     vaultArgIndex = i + 1
 }
 
-// Every non-flag argument is a file to open; the first one is focused.
-let filePaths = arguments.enumerated()
-    .filter { $0.offset > 0 && $0.offset != vaultArgIndex && !$0.element.hasPrefix("-") }
-    .map(\.element)
-guard !filePaths.isEmpty else {
+// Every non-flag argument is a file to open; the first one is focused. A
+// positional argument that names a directory (e.g. `editxr .`) is not a file:
+// it becomes the project root for this run, and the file-explorer sidebar
+// opens on it (see LaunchArguments).
+let launch = LaunchArguments.parse(arguments: arguments, vaultArgIndex: vaultArgIndex)
+if let root = launch.directoryRoot {
+    Vault.commandLineRoot = root
+}
+
+let states = LaunchArguments.makeStates(from: launch)
+guard !states.isEmpty else {
     print(AppInfo.helpText)
     exit(1)
 }
 
-let states = filePaths.map { EditorState(filePath: $0) }
 let app = EditorApp(states: states)
 app.start()
