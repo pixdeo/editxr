@@ -12,7 +12,11 @@ struct Document {
     var selectionAnchor: CursorPosition?
     
     init(content: String = "") {
-        self.lines = content.isEmpty ? [""] : content.components(separatedBy: "\n")
+        // Normalize on the way in: CRLF/CR become LF and stray control
+        // characters are dropped, so a file saved with classic-Mac line endings
+        // (or a paste that carried them) can't desync the terminal layout.
+        let text = sanitizedForEditing(content)
+        self.lines = text.isEmpty ? [""] : text.components(separatedBy: "\n")
         self.cursorLine = 0
         self.cursorColumn = 0
         self.selectionAnchor = nil
@@ -89,14 +93,15 @@ struct Document {
         let startIdx = firstLine.index(firstLine.startIndex, offsetBy: min(range.start.column, firstLine.count))
         let endIdx = lastLine.index(lastLine.startIndex, offsetBy: min(range.end.column, lastLine.count))
 
-        let newContent = String(firstLine[..<startIdx]) + text + String(lastLine[endIdx...])
+        let clean = sanitizedForEditing(text)
+        let newContent = String(firstLine[..<startIdx]) + clean + String(lastLine[endIdx...])
         let newLines = newContent.components(separatedBy: "\n")
         lines.replaceSubrange(range.start.line...range.end.line, with: newLines)
 
-        let textLines = text.components(separatedBy: "\n")
+        let textLines = clean.components(separatedBy: "\n")
         if textLines.count == 1 {
             cursorLine = range.start.line
-            cursorColumn = range.start.column + text.count
+            cursorColumn = range.start.column + clean.count
         } else {
             cursorLine = range.start.line + textLines.count - 1
             cursorColumn = textLines.last?.count ?? 0
@@ -212,6 +217,9 @@ struct Document {
     
     mutating func insertCharacter(_ char: Character) {
         guard cursorLine < lines.count else { return }
+        // Defense in depth: never let a cursor-moving control character into a
+        // line, even if a caller bypassed the input sanitizer. Tabs are native.
+        if let scalar = char.unicodeScalars.first, isDroppedControl(scalar) { return }
         var line = lines[cursorLine]
         let index = line.index(line.startIndex, offsetBy: min(cursorColumn, line.count))
         line.insert(char, at: index)

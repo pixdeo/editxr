@@ -15,6 +15,8 @@ struct Config: Codable {
     var sidebar: String? = nil          // SidebarMode raw value (off/outline/files)
     var leftMargin: Int? = 1
     var scrollOff: Int? = 4
+    // Columns a tab advances to (display only: the file keeps its `\t`).
+    var tabWidth: Int? = 8
     // Stored as the raw string so renaming/removing a theme can't make the
     // whole config fail to decode; unknown values just fall back to default.
     var theme: String? = nil

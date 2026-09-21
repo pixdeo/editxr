@@ -223,6 +223,9 @@ class EditorApp {
             PaletteCommand(title: "Find next", shortcut: "^G") { [weak self] in self?.state.searchNext() },
             PaletteCommand(title: "Undo", shortcut: "^U") { [weak self] in self?.state.undo() },
             PaletteCommand(title: "Redo", shortcut: "^Y") { [weak self] in self?.state.redo() },
+            PaletteCommand(title: "Indent / insert tab", shortcut: "Tab") { [weak self] in self?.state.handleTab() },
+            PaletteCommand(title: "Outdent", shortcut: "⇧Tab") { [weak self] in self?.state.handleOutdent() },
+            PaletteCommand(title: "Focus sidebar", shortcut: "⌥S") { [weak self] in self?.focusSidebar() },
             PaletteCommand(title: "Clear all", shortcut: "") { [weak self] in self?.state.clearAll() },
         ]
 
@@ -673,7 +676,9 @@ class EditorApp {
             row("Paste", "^V"),
             row("Delete word back", "^H / ⌥⌫"),
             row("Cycle task state", "^T"),
-            row("Cycle task / promote heading", "Tab"),
+            row("Indent / insert tab (heading: promote)", "Tab"),
+            row("Outdent (heading: demote)", "⇧Tab"),
+            row("Focus sidebar", "⌥S"),
             row("AI assist", "^Space"),
             .spacer, .header("Find"),
             row("Find", "^F"),
@@ -717,6 +722,12 @@ class EditorApp {
                 guard let self = self else { return }
                 self.commandPanel?.beginInput(prompt: "Scroll-off (rows from edge, 0–20)", value: "\(self.state.scrollMargin)", isSecret: false) { [weak self] value in
                     if let n = Int(value.trimmingCharacters(in: .whitespaces)) { self?.state.setScrollOff(n) }
+                }
+            },
+            PaletteCommand(title: "Set tab width", shortcut: "\(state.tabWidth)") { [weak self] in
+                guard let self = self else { return }
+                self.commandPanel?.beginInput(prompt: "Tab width (columns, 1–16)", value: "\(self.state.tabWidth)", isSecret: false) { [weak self] value in
+                    if let n = Int(value.trimmingCharacters(in: .whitespaces)) { self?.state.setTabWidth(n) }
                 }
             },
         ]
@@ -1196,6 +1207,12 @@ class EditorApp {
                     state.deleteWordBackward()
                     needsRender = true
                 }
+                if arrowKeyParser.altSidebar {
+                    arrowKeyParser.altSidebar = false
+                    if state.sidebarMode == .off { toggleSidebarMode(.outline) }
+                    focusSidebar()
+                    needsRender = true
+                }
                 continue
             }
 
@@ -1265,20 +1282,17 @@ class EditorApp {
             case Key.ctrlRightBracket:
                 followLinkUnderCursor()
             case Key.tab:
-                // With a docked sidebar visible, Tab moves focus into it (task
-                // cycling stays on Ctrl+T). Otherwise Tab cycles a task's state or
-                // promotes a heading (### → ## → #); both gated, so plain lines
-                // are untouched.
-                if sidebarRendered && !sidebarFocused {
-                    focusSidebar()
-                    needsRender = true
-                } else if state.cursorLineIsTask {
-                    state.cycleTaskState()
-                    needsRender = true
-                } else if state.cursorHeadingLevel != nil {
+                // Headings keep the promote/demote pair on Tab / Shift+Tab.
+                // Everywhere else Tab indents: a native tab at the caret, or one
+                // tab on each selected line. Task cycling stays on Ctrl+T, and
+                // the sidebar is focused with Alt+S, so a bare Tab never
+                // disappears into a mode switch.
+                if state.cursorHeadingLevel != nil {
                     state.adjustHeadingLevel(by: -1)
-                    needsRender = true
+                } else {
+                    state.handleTab()
                 }
+                needsRender = true
             case Key.ctrlSpace:
                 showLLMModal()
             case Key.ctrlE:
@@ -1511,8 +1525,12 @@ class EditorApp {
         case .shiftPageDown:
             state.pageDown(viewportHeight: viewportHeight, selecting: true)
         case .shiftTab:
-            // Demote a heading (# → ## → ###, "less title"). Headings only.
-            state.adjustHeadingLevel(by: 1)
+            // Headings demote (# → ## → ###); every other line outdents.
+            if state.cursorHeadingLevel != nil {
+                state.adjustHeadingLevel(by: 1)
+            } else {
+                state.handleOutdent()
+            }
         }
         render()
     }
@@ -2137,7 +2155,7 @@ class EditorApp {
             
             renderedLine = applyFocus(renderedLine, rawText: line, baseColumn: 0, lineIndex: i)
             let gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
-            let scrolled = applyHorizontalScroll(renderedLine, scrollX: state.scrollX, width: width)
+            let scrolled = applyHorizontalScroll(expandRowTabs(renderedLine), scrollX: state.scrollX, width: width)
             output.append(padToWidth(gutter + scrolled, width: gutterWidth + width))
         }
 
@@ -2152,7 +2170,7 @@ class EditorApp {
         case .add(let s):  color = Theme.diffAdd;   text = "+ \(s)"
         }
         let styled = "\(color)\(text)\(Theme.reset)"
-        let scrolled = applyHorizontalScroll(styled, scrollX: 0, width: width)
+        let scrolled = applyHorizontalScroll(expandRowTabs(styled), scrollX: 0, width: width)
         let gutter = String(repeating: " ", count: gutterWidth)
         return padToWidth(gutter + scrolled, width: gutterWidth + width)
     }
@@ -2360,14 +2378,16 @@ class EditorApp {
     /// default style, re-applied around each span so colours don't bleed.
     private func renderInlineCell(_ text: String, base: String) -> (styled: String, width: Int) {
         let spans = MarkdownLineParser.parse(text)
-        guard !spans.isEmpty else { return ("\(base)\(text)", text.displayWidth) }
+        guard !spans.isEmpty else {
+            return ("\(base)\(text)", expandedDisplayWidth(text, tabStop: state.tabWidth))
+        }
         let chars = Array(text)
         var styled = ""
         var width = 0
         var lastEnd = 0
         func emit(_ s: String, _ style: String) {
             styled += "\(style)\(s)"
-            width += s.displayWidth
+            width += expandedDisplayWidth(s, tabStop: state.tabWidth)
         }
         for span in spans.sorted(by: { $0.rawStart < $1.rawStart }) {
             if span.rawStart > lastEnd { emit(String(chars[lastEnd..<span.rawStart]), base) }
@@ -2450,7 +2470,7 @@ class EditorApp {
                     isCursorLine: isCursorLine,
                     cursorColumn: doc.cursorColumn,
                     segmentStart: segmentStart,
-                    segmentLength: segment.count,
+                    segment: segment,
                     isLastSegment: segmentIndex == wrappedSegments.count - 1,
                     width: width
                 )
@@ -2478,12 +2498,13 @@ class EditorApp {
                     ? renderGutter(lineNumber: i + 1, width: gutterWidth)
                     : String(repeating: " ", count: gutterWidth)
                 
-                output.append(padToWidth(gutter + renderedLine, width: gutterWidth + width))
+                output.append(padToWidth(gutter + expandRowTabs(renderedLine), width: gutterWidth + width))
                 visualLine += 1
             }
             
             if isCursorLine && doc.cursorColumn == lineToWrap.count {
-                if let lastSeg = wrappedSegments.last, lastSeg.segment.count == width {
+                if let lastSeg = wrappedSegments.last,
+                   expandedDisplayWidth(lastSeg.segment, tabStop: state.tabWidth) >= width {
                     if visualLine >= state.scrollOffset && output.count < height {
                         let gutter = String(repeating: " ", count: gutterWidth)
                         output.append(padToWidth(gutter + "\(Theme.inverse) \(Theme.reset)", width: gutterWidth + width))
@@ -2578,14 +2599,17 @@ class EditorApp {
         isCursorLine: Bool,
         cursorColumn: Int,
         segmentStart: Int,
-        segmentLength: Int,
+        segment: String,
         isLastSegment: Bool,
         width: Int
     ) -> Int {
         guard isCursorLine else { return -1 }
-        let segmentEnd = segmentStart + segmentLength
+        let segmentEnd = segmentStart + segment.count
         let cursorInSegment = cursorColumn >= segmentStart && cursorColumn < segmentEnd
-        let cursorAtSegmentEnd = isLastSegment && cursorColumn == segmentEnd && segmentLength < width
+        // Compare *display* width, not Character count: a tab or a wide glyph
+        // can fill the budget with fewer characters.
+        let fillsRow = expandedDisplayWidth(segment, tabStop: state.tabWidth) >= width
+        let cursorAtSegmentEnd = isLastSegment && cursorColumn == segmentEnd && !fillsRow
         return (cursorInSegment || cursorAtSegmentEnd) ? cursorColumn - segmentStart : -1
     }
     
@@ -2977,50 +3001,17 @@ class EditorApp {
         return result
     }
     
-    /// Word-wrap `line` to `width` *display columns*. Breaks are measured by
-    /// `displayWidth` (so wide glyphs — emoji, CJK — count as 2), but the returned
-    /// `startOffset` stays a Character index, because the cursor/span/segment math
-    /// downstream is Character-based. Prefers the last space within budget;
-    /// hard-breaks a word that has none, and never drops a glyph.
+    /// Word-wrap `line` to `width` *display columns*. Shared with the scroll /
+    /// navigation math (`wrapTextRows`), so tabs and wide glyphs can't make the
+    /// renderer and the cursor disagree about how many rows a line occupies.
     private func wrapLine(_ line: String, width: Int) -> [(segment: String, startOffset: Int)] {
-        guard width > 0 else { return [(line, 0)] }
-        if line.isEmpty { return [("", 0)] }
-        let chars = Array(line)
-        let n = chars.count
-        if chars.reduce(0, { $0 + displayWidth($1) }) <= width { return [(line, 0)] }
+        return wrapTextRows(line, width: width, tabStop: state.tabWidth)
+    }
 
-        var segments: [(segment: String, startOffset: Int)] = []
-        var start = 0
-        while start < n {
-            var w = 0
-            var i = start
-            var lastSpace = -1
-            while i < n {
-                let cw = displayWidth(chars[i])
-                if w + cw > width { break }
-                w += cw
-                if chars[i] == " " { lastSpace = i }
-                i += 1
-            }
-            if i >= n {                       // the rest fits
-                segments.append((String(chars[start..<n]), start))
-                break
-            }
-            if i == start {                   // a single glyph wider than the budget
-                segments.append((String(chars[start..<start + 1]), start))
-                start += 1
-                continue
-            }
-            if lastSpace > start {            // word wrap: drop the breaking space
-                segments.append((String(chars[start..<lastSpace]), start))
-                start = lastSpace + 1
-            } else {                          // no space: hard break, keep every glyph
-                segments.append((String(chars[start..<i]), start))
-                start = i
-            }
-        }
-
-        return segments.isEmpty ? [("", 0)] : segments
+    /// Expand a row's tabs to spaces (display-only) so the terminal never sees a
+    /// raw `\t`, whose column would depend on the terminal's own tab stops.
+    private func expandRowTabs(_ text: String) -> String {
+        return expandTabs(text, originColumn: 0, tabStop: state.tabWidth)
     }
     
     private func renderSegmentWithSelection(segment: String, lineIndex: Int, segmentStart: Int, selection: (start: CursorPosition, end: CursorPosition)?, doc: Document) -> String {
@@ -3062,6 +3053,7 @@ class EditorApp {
         let bg = Theme.codeBlockBg
         let fg = Theme.codeBlock
         let body: String
+        let plainWidth = expandedDisplayWidth(segment, tabStop: state.tabWidth)
         let visible: Int
         if cursorColumn >= 0 {
             let col = min(cursorColumn, segment.count)
@@ -3069,10 +3061,11 @@ class EditorApp {
             let charAtCursor = col < segment.count ? String(segment[segment.index(segment.startIndex, offsetBy: col)]) : " "
             let after = col < segment.count ? String(segment.dropFirst(col + 1)) : ""
             body = "\(bg)\(fg)\(before)\(Theme.inverse)\(charAtCursor)\(Theme.reset)\(bg)\(fg)\(after)"
-            visible = before.displayWidth + 1 + after.displayWidth
+            // The caret replaces a glyph (same width); past the end it adds one.
+            visible = plainWidth + (col >= segment.count ? 1 : 0)
         } else {
             body = "\(bg)\(fg)\(segment)"
-            visible = segment.displayWidth
+            visible = plainWidth
         }
         // Fill the rest of the content width so the block reads as a panel.
         let pad = max(0, width - visible)
@@ -3093,6 +3086,7 @@ class EditorApp {
         let bg = Theme.codeBlockBg
         let fg = Theme.codeBlock
         let body: String
+        let plainWidth = expandedDisplayWidth(line, tabStop: state.tabWidth)
         let visible: Int
         if isCursorLine {
             let col = min(cursorColumn, line.count)
@@ -3100,10 +3094,10 @@ class EditorApp {
             let charAtCursor = col < line.count ? String(line[line.index(line.startIndex, offsetBy: col)]) : " "
             let after = col < line.count ? String(line.dropFirst(col + 1)) : ""
             body = "\(bg)\(fg)\(before)\(Theme.inverse)\(charAtCursor)\(Theme.reset)\(bg)\(fg)\(after)"
-            visible = before.displayWidth + 1 + after.displayWidth
+            visible = plainWidth + (col >= line.count ? 1 : 0)
         } else {
             body = "\(bg)\(fg)\(line)"
-            visible = line.displayWidth
+            visible = plainWidth
         }
         let pad = max(0, width - visible)
         return "\(body)\(bg)\(String(repeating: " ", count: pad))\(Theme.reset)"
@@ -3144,7 +3138,7 @@ class EditorApp {
 
             let focused = applyFocus(rendered, rawText: line, baseColumn: 0, lineIndex: i)
             let gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
-            let scrolled = applyHorizontalScroll(focused, scrollX: state.scrollX, width: width)
+            let scrolled = applyHorizontalScroll(expandRowTabs(focused), scrollX: state.scrollX, width: width)
             output.append(padToWidth(gutter + scrolled, width: gutterWidth + width))
         }
         return output
@@ -3202,7 +3196,7 @@ class EditorApp {
 
             renderedLine = applyFocus(renderedLine, rawText: line, baseColumn: 0, lineIndex: i)
             let gutter = renderGutter(lineNumber: i + 1, width: gutterWidth)
-            let scrolled = applyHorizontalScroll(renderedLine, scrollX: state.scrollX, width: width)
+            let scrolled = applyHorizontalScroll(expandRowTabs(renderedLine), scrollX: state.scrollX, width: width)
             output.append(padToWidth(gutter + scrolled, width: gutterWidth + width))
         }
 
@@ -3229,7 +3223,8 @@ class EditorApp {
                     
                     let isLastSegment = segmentIndex == wrappedSegments.count - 1
                     let cursorInSegment = isCursorLine && doc.cursorColumn >= segmentStart && doc.cursorColumn < segmentEnd
-                    let cursorAtSegmentEnd = isCursorLine && isLastSegment && doc.cursorColumn == segmentEnd && segment.count < width
+                    let fillsRow = expandedDisplayWidth(segment, tabStop: state.tabWidth) >= width
+                    let cursorAtSegmentEnd = isCursorLine && isLastSegment && doc.cursorColumn == segmentEnd && !fillsRow
                     let localCursor = (cursorInSegment || cursorAtSegmentEnd) ? doc.cursorColumn - segmentStart : -1
                     
                     var renderedLine: String
@@ -3251,13 +3246,14 @@ class EditorApp {
                         gutter = String(repeating: " ", count: gutterWidth)
                     }
                     
-                    output.append(padToWidth(gutter + renderedLine, width: gutterWidth + width))
+                    output.append(padToWidth(gutter + expandRowTabs(renderedLine), width: gutterWidth + width))
                 }
                 visualLine += 1
             }
             
             if isCursorLine && doc.cursorColumn == line.count {
-                if let lastSeg = wrappedSegments.last, lastSeg.segment.count == width {
+                if let lastSeg = wrappedSegments.last,
+                   expandedDisplayWidth(lastSeg.segment, tabStop: state.tabWidth) >= width {
                     if visualLine >= state.scrollOffset && output.count < height {
                         let gutter = String(repeating: " ", count: gutterWidth)
                         let cursorLine = "\(Theme.inverse) \(Theme.reset)"
@@ -3623,7 +3619,7 @@ class EditorApp {
         let doc = state.document
         guard doc.cursorLine < doc.lines.count else { return nil }
         if let list = parseListLine(doc.lines[doc.cursorLine]), case .todo = list.kind {
-            return "^T/Tab toggle task"
+            return "^T toggle task · Tab indent"
         }
         if state.cursorHeadingLevel != nil {
             return "Tab/⇧Tab title size"
@@ -4369,6 +4365,9 @@ class ArrowKeyParser {
     /// Set when ESC is followed by DEL/BS — i.e. Option+Delete (⌥⌫), which Macs
     /// send as ESC + 0x7F. Surfaced like arrowKey and consumed by the input loop.
     var altDelete = false
+    /// Set for Alt+S (ESC + "s") — the "focus sidebar" shortcut. Kept off the
+    /// arrow keys because Option+arrow is reserved by many terminals.
+    var altSidebar = false
     private var state: State = .initial
     private var buffer: [Character] = []
     
@@ -4420,6 +4419,13 @@ class ArrowKeyParser {
             }
             // A second ESC starts a fresh sequence — stay in .escape for it.
             if character == "\u{1B}" {
+                return true
+            }
+            // Alt+S focuses the sidebar (the bare Tab no longer can, since Tab
+            // now indents).
+            if character == "s" || character == "S" {
+                altSidebar = true
+                state = .initial
                 return true
             }
             // Anything else is an Alt/Option combo we don't bind (Option+F is

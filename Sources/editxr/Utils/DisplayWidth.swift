@@ -118,6 +118,17 @@ func displayWidth(_ char: Character) -> Int {
     return 1
 }
 
+/// Display advance of `char` when it sits at display column `column`. A tab
+/// advances to the next `tabStop`, matching how the editor expands tabs for
+/// display; every other glyph keeps its fixed `displayWidth`.
+func displayAdvance(_ char: Character, atColumn column: Int, tabStop: Int) -> Int {
+    if char == "\t" {
+        let stop = max(1, tabStop)
+        return stop - (column % stop)
+    }
+    return displayWidth(char)
+}
+
 extension StringProtocol {
     /// Visible terminal width, ignoring ANSI escape sequences.
     var displayWidth: Int {

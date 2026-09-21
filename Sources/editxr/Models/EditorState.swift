@@ -59,6 +59,8 @@ class EditorState {
     /// What the docked left sidebar shows (off / outline / files).
     var sidebarMode: SidebarMode = .off
     var leftMargin: Int = 1
+    /// Columns a tab advances to for display (the file keeps its `\t`).
+    var tabWidth: Int = 8
     var themeName: ThemeName = .system
     var appearance: Appearance = .auto
     var isDirty: Bool = false
@@ -121,6 +123,7 @@ class EditorState {
         }
         self.leftMargin = max(0, min(8, config.leftMargin ?? 1))
         self.scrollMargin = max(0, min(20, config.scrollOff ?? 4))
+        self.tabWidth = max(1, min(16, config.tabWidth ?? 8))
         // Clay is the default on first run; a saved choice still wins.
         self.themeName = config.theme.flatMap(ThemeName.init(rawValue:)) ?? .clay
         self.appearance = config.appearance.flatMap(Appearance.init(rawValue:)) ?? .auto
@@ -352,6 +355,11 @@ class EditorState {
         saveConfig()
     }
 
+    func setTabWidth(_ value: Int) {
+        tabWidth = max(1, min(16, value))
+        saveConfig()
+    }
+
     /// Trackpad/wheel scroll: move the viewport directly and leave the cursor
     /// where it is. The cursor is only dragged once it would come within
     /// `scrollMargin` (the scroll-off) of the top/bottom edge.
@@ -419,6 +427,7 @@ class EditorState {
         config.sidebar = sidebarMode.rawValue
         config.leftMargin = leftMargin
         config.scrollOff = scrollMargin
+        config.tabWidth = tabWidth
         config.theme = themeName.rawValue
         config.appearance = appearance.rawValue
         config.renderMarkdown = viewMode == .normal
@@ -507,6 +516,75 @@ class EditorState {
             document.cursorColumn = min(cursorCol, document.lines[document.cursorLine].count)
         }
         isDirty = true
+    }
+
+    // MARK: - Tab: indent / outdent
+
+    /// Tab in the editor: insert a native tab at the caret, or indent every line
+    /// the selection touches. Headings are handled by the caller, which promotes
+    /// them instead (indenting a heading is meaningless).
+    func handleTab() {
+        saveSnapshot()
+        if document.hasSelection {
+            let range = selectedLineRange()
+            for line in range { document.lines[line] = "\t" + document.lines[line] }
+            shiftColumns(in: range, by: 1)
+        } else {
+            document.insertCharacter("\t")
+        }
+        isDirty = true
+    }
+
+    /// Shift+Tab in the editor: strip one leading indent unit (a tab, or up to
+    /// `tabWidth` spaces) from every line the selection touches, or from the
+    /// cursor's line. No-op — and no undo entry — when there is nothing to strip.
+    func handleOutdent() {
+        let range = document.hasSelection ? selectedLineRange() : document.cursorLine...document.cursorLine
+        guard range.contains(where: { leadingIndentLength(document.lines[$0]) > 0 }) else { return }
+        saveSnapshot()
+        for line in range {
+            let remove = leadingIndentLength(document.lines[line])
+            guard remove > 0 else { continue }
+            document.lines[line] = String(document.lines[line].dropFirst(remove))
+            shiftColumns(forLine: line, by: -remove)
+        }
+        isDirty = true
+    }
+
+    private func selectedLineRange() -> ClosedRange<Int> {
+        guard let sel = document.selectionRange else {
+            return document.cursorLine...document.cursorLine
+        }
+        return sel.start.line...sel.end.line
+    }
+
+    /// Characters of one indent unit at the start of `line`: a leading tab is a
+    /// whole unit, otherwise up to `tabWidth` leading spaces.
+    private func leadingIndentLength(_ line: String) -> Int {
+        if line.hasPrefix("\t") { return 1 }
+        var spaces = 0
+        for char in line {
+            if char == " " { spaces += 1 } else { break }
+        }
+        return min(spaces, tabWidth)
+    }
+
+    /// Keep the caret and selection anchored to the same text after a line's
+    /// leading columns are inserted (`delta > 0`) or removed (`delta < 0`).
+    private func shiftColumns(in range: ClosedRange<Int>, by delta: Int) {
+        if range.contains(document.cursorLine) {
+            document.cursorColumn = max(0, min(document.cursorColumn + delta,
+                                                document.lines[document.cursorLine].count))
+        }
+        if let anchor = document.selectionAnchor, range.contains(anchor.line) {
+            document.selectionAnchor = CursorPosition(
+                line: anchor.line,
+                column: max(0, min(anchor.column + delta, document.lines[anchor.line].count)))
+        }
+    }
+
+    private func shiftColumns(forLine line: Int, by delta: Int) {
+        shiftColumns(in: line...line, by: delta)
     }
 
     private enum NewlineAction {
@@ -793,17 +871,16 @@ class EditorState {
     
     func pasteText(_ text: String) {
         guard !text.isEmpty else { return }
+        // Clipboard text often carries CR / CRLF line endings (or other control
+        // characters a terminal would execute). Normalize before inserting, or a
+        // single paste becomes one giant line that shears the whole layout.
+        let clean = sanitizedForEditing(text)
+        guard !clean.isEmpty else { return }
         saveSnapshot()
         if document.hasSelection {
             document.deleteSelection()
         }
-        for char in text {
-            if char == "\n" {
-                document.insertNewline()
-            } else {
-                document.insertCharacter(char)
-            }
-        }
+        insertSanitized(clean)
         isDirty = true
     }
     
@@ -870,6 +947,11 @@ class EditorState {
     }
     
     private func insertText(_ text: String) {
+        insertSanitized(sanitizedForEditing(text))
+    }
+
+    /// Insert text that has already been normalized/cleaned.
+    private func insertSanitized(_ text: String) {
         for char in text {
             if char == "\n" {
                 document.insertNewline()
@@ -962,35 +1044,11 @@ class EditorState {
         }
     }
     
+    /// Wrapping is shared with the renderer (see `wrapTextRows`) so the row a
+    /// glyph lands on is the same one the cursor is scrolled against — tabs and
+    /// wide glyphs included.
     private func wrapLineForNavigation(_ line: String, width: Int) -> [(segment: String, startOffset: Int)] {
-        guard width > 0 else { return [(line, 0)] }
-        if line.isEmpty { return [("", 0)] }
-        if line.count <= width { return [(line, 0)] }
-        
-        var segments: [(segment: String, startOffset: Int)] = []
-        var remaining = line
-        var offset = 0
-        
-        while !remaining.isEmpty {
-            if remaining.count <= width {
-                segments.append((remaining, offset))
-                break
-            }
-            
-            let chunk = String(remaining.prefix(width))
-            if let lastSpace = chunk.lastIndex(of: " "), lastSpace > chunk.startIndex {
-                let breakPoint = chunk.distance(from: chunk.startIndex, to: lastSpace)
-                segments.append((String(remaining.prefix(breakPoint)), offset))
-                offset += breakPoint + 1
-                remaining = String(remaining.dropFirst(breakPoint + 1))
-            } else {
-                segments.append((chunk, offset))
-                offset += width
-                remaining = String(remaining.dropFirst(width))
-            }
-        }
-        
-        return segments.isEmpty ? [("", 0)] : segments
+        return wrapTextRows(line, width: width, tabStop: tabWidth)
     }
     
     func setViewportWidth(_ width: Int) {
