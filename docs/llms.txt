@@ -12,7 +12,8 @@ the change as an inline diff before it lands.
 - AI section editing: select a section, describe a change, and accept or reject it as a red/green inline diff. No chat thread; nothing is applied without approval.
 - Obsidian-style linking: `[[wikilinks]]` and `[](file.md)` links render collapsed and open in a tab (Ctrl+]), with fuzzy file search (Ctrl+O) and back-navigation (Ctrl+[).
 - Mouse-friendly editing: click to place the cursor or follow a link, drag to select; double-click selects a word, triple-click a line.
-- Docked sidebars: a live outline of the document's headings, or a file explorer for the folder you opened.
+- Docked sidebars: a live outline of the document's headings, or a file explorer for the folder you opened (focus with Alt+S).
+- Real tabs and indentation: Tab indents / inserts a literal tab, Shift+Tab outdents, with a configurable tab width; pasted text with CR/CRLF line endings is normalized so it can't corrupt the layout.
 - Bring your own model: LM Studio (local), OpenAI, OpenRouter, or an offline mock that needs no backend.
 - 12 themes, light or dark, chosen from a command palette.
 - Incremental find, HTML export, syntax highlighting, word wrap, and per-file cursor memory.

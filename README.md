@@ -75,6 +75,11 @@ This is a **test** with *markdown*.
 - **Mouse-friendly selection.** Click to place the cursor or follow a link,
   drag to select, double-click a word, triple-click a line (and keep clicking
   to alternate between the two).
+- **Tabs and indentation.** `Tab` indents the selection (or inserts a literal
+  tab) and `Shift+Tab` outdents; on a heading they promote / demote instead.
+  The tab width is configurable (default 8) and tabs are measured into the wrap
+  math, so the layout and the caret stay in sync. Pasted text with CR/CRLF line
+  endings is normalized on the way in, so it can't shear the screen.
 - **AI section editing.** Rewrite the selection or current block with an LLM and
   review it as a red/green inline diff: `y` to accept, `n` to reject. Prompt
   history recalls with ↑/↓.
@@ -182,6 +187,8 @@ auto-detection also fall back for now.
 | `Ctrl+]` | Follow link under cursor (or click a link) |
 | `Ctrl+[` / `Esc` | Back to the previous file |
 | `Ctrl+T` | Cycle task state (`[ ]` → `[*]` → `[x]`) |
+| `Tab` / `Shift+Tab` | Indent / outdent (on a heading: promote / demote) |
+| `⌥S` | Focus the sidebar (outline / file tree) |
 | `Ctrl+L` | Toggle line numbers |
 | `Ctrl+P` | Command palette / settings |
 | `Ctrl+Space` | AI assist (edit the section) |
