@@ -234,6 +234,10 @@ final class RenderTests: XCTestCase {
         let state = EditorState(filePath: tmp)
         state.wordWrap = false
         state.blockMode = false
+        // These tests measure the pure content row; don't let the developer's
+        // own config (line numbers / left margin) shift the columns.
+        state.showLineNumbers = false
+        state.leftMargin = 0
         state.document.cursorLine = 1
         state.document.cursorColumn = 0
         state.scrollX = scrollX

@@ -63,15 +63,29 @@ struct ANSIScanner {
             return true
         }
     }
+    /// True while inside an escape sequence (ESC seen, sequence not yet
+    /// complete). `consume` returns true for the byte that completes the
+    /// sequence, after which this is false again — so callers that walk whole
+    /// sequences can stop exactly at the end of the first one instead of
+    /// merging the next escape into it.
+    var isConsumingEscape: Bool { state != .ground }
 }
 
 /// Index just past the escape sequence that starts at `chars[start]` (which must
 /// be ESC). Used by the column-walking splicers, which need whole sequences.
+/// Returns the end of *one* sequence: consecutive escapes (e.g. a reset right
+/// before an OSC 8 hyperlink) are kept apart, because the splicers treat each
+/// sequence individually (a reset clears the style, a hyperlink open/close
+/// toggles the link region).
 func ansiEscapeEnd(_ chars: [Character], from start: Int) -> Int {
     var scanner = ANSIScanner()
     var i = start
-    while i < chars.count, scanner.consume(chars[i]) {
+    while i < chars.count {
+        let wasEscaping = scanner.isConsumingEscape
+        let consumed = scanner.consume(chars[i])
+        if !consumed { break }
         i += 1
+        if wasEscaping && !scanner.isConsumingEscape { break }
     }
     return i
 }

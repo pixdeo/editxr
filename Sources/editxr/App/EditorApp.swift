@@ -1558,6 +1558,18 @@ class EditorApp {
         return renderEditor(width: width, height: height).components(separatedBy: "\n")
     }
 
+    /// Test hook: open the command palette without touching the terminal.
+    func showCommandPanelForTest() {
+        commandPanel?.setRoot { [] }
+        commandPanel?.show()
+    }
+
+    /// Test hook: run the panel-over-content splice on arbitrary strings, so
+    /// tests can pin down how overlays interact with the content's styling.
+    func spliceVisibleForTest(base: String, insert: String, at: Int, insertWidth: Int, width: Int) -> String {
+        return spliceVisible(base: base, insert: insert, at: at, insertWidth: insertWidth, width: width)
+    }
+
     // Test hooks for sidebar focus/navigation (no rendering side effects).
     func focusSidebarForTest() { sidebarRendered = true; focusSidebar() }
     func sidebarKeyForTest(_ s: String) { handleSidebarKey(s) }
@@ -1902,6 +1914,12 @@ class EditorApp {
         var i = 0
         var col = 0
         var active = ""
+        /// The OSC 8 hyperlink open sequence currently live at the walk position
+        /// (nil outside a hyperlink). Kept apart from `active`: an SGR reset
+        /// does not close a hyperlink, and blindly re-emitting the open after
+        /// the insert would absorb the panel into the region — the terminal
+        /// would draw the link's underscore over it.
+        var activeHyperlink: String? = nil
         var out = ""
 
         func readEscape() -> String {
@@ -1910,12 +1928,22 @@ class EditorApp {
             return String(chars[i..<end])
         }
 
+        func track(_ esc: String) {
+            if esc == Theme.reset {
+                active = ""
+            } else if isOSC8Hyperlink(esc) {
+                activeHyperlink = (esc == Theme.hyperlinkClose) ? nil : esc
+            } else {
+                active += esc
+            }
+        }
+
         while i < n && col < at {
             let c = chars[i]
             if c == "\u{1B}" {
                 let esc = readEscape()
                 out += esc
-                if esc == Theme.reset { active = "" } else { active += esc }
+                track(esc)
             } else {
                 out.append(c)
                 col += displayWidth(c)
@@ -1926,6 +1954,9 @@ class EditorApp {
             out += String(repeating: " ", count: at - col)
         }
 
+        // Terminate a hyperlink that was open at the insert point so the panel
+        // never becomes part of it; the panel itself is drawn reset.
+        if activeHyperlink != nil { out += Theme.hyperlinkClose }
         out += Theme.reset + insert + Theme.reset
 
         var skipped = 0
@@ -1933,18 +1964,29 @@ class EditorApp {
             let c = chars[i]
             if c == "\u{1B}" {
                 let esc = readEscape()
-                if esc == Theme.reset { active = "" } else { active += esc }
+                track(esc)
             } else {
                 skipped += displayWidth(c)
                 i += 1
             }
         }
 
+        // Resume the base content: re-open the hyperlink if it is still live
+        // past the panel (its close sequence follows in the remaining base),
+        // then re-apply the SGR styles that were active there.
+        if let hyperlink = activeHyperlink { out += hyperlink }
         out += active
         if i < n {
             out += String(chars[i..<n])
         }
         return out
+    }
+
+    /// True for OSC 8 hyperlink sequences — both the open (`ESC]8;;uri ESC\`)
+    /// and the close (`ESC]8;;ESC\`). SGR resets don't terminate a hyperlink,
+    /// so these have to be tracked on their own by the splicers.
+    private func isOSC8Hyperlink(_ esc: String) -> Bool {
+        esc.hasPrefix("\u{1B}]8;") && (esc.hasSuffix("\u{1B}\\") || esc.hasSuffix("\u{07}"))
     }
 
     private func toggleCommandPanel() {
@@ -2901,9 +2943,14 @@ class EditorApp {
             }
 
             // Open/close an OSC 8 hyperlink around the link's display text so the
-            // terminal underlines it on hover and follows it on Cmd-click.
+            // terminal underlines it on hover and follows it on Cmd-click. Both
+            // ends are clipped to this row's segment: when a link wraps, a row
+            // holding only the start (or end) of the link would otherwise leave
+            // the hyperlink open across rows — and any overlay spliced into
+            // those rows (the command panel) would be absorbed into the region
+            // and get the underscore drawn over it.
             let linkUri = linkSpan.flatMap { linkURI(for: $0.linkTarget) }
-            if let span = linkSpan, let uri = linkUri, globalPos == span.contentStart {
+            if let span = linkSpan, let uri = linkUri, globalPos == max(span.contentStart, segmentStart) {
                 result += Theme.hyperlinkOpen(uri)
             }
 
@@ -2917,7 +2964,8 @@ class EditorApp {
                 result += String(char)
             }
 
-            if let span = linkSpan, linkUri != nil, globalPos == span.contentEnd - 1 {
+            if let span = linkSpan, let uri = linkUri,
+               globalPos == min(span.contentEnd, segmentStart + segment.count) - 1 {
                 result += Theme.hyperlinkClose
             }
         }
