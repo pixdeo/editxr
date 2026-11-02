@@ -87,6 +87,8 @@ class EditorApp {
     /// If more bytes arrive within the window they're re-joined with the ESC;
     /// otherwise it fires as the plain Escape key.
     private var pendingEscapeWork: DispatchWorkItem?
+    /// The start of a sequence waiting on the rest of it (see `handleInput`).
+    private var heldInput = ""
     /// How long a lone ESC waits for the rest of a sequence, vim-style.
     private static let escapeTimeout: TimeInterval = 0.05
     /// Monotonic token invalidating deferred link-follows: every new press or
@@ -128,11 +130,24 @@ class EditorApp {
     private var sidebarFocused = false
     private var sidebarSelection = 0
     private var collapsedFolders: Set<String> = []
-    private var fileTreeScanCache: [String]?
+    private var fileTreeScanCache: [String]? {
+        didSet { fileTreeEntriesCache = nil }
+    }
+    /// The sidebar's file rows, as last laid out. Every frame repaints the
+    /// sidebar, and sorting a vault's tree to do it would be most of the frame.
+    private var fileTreeEntriesCache: (collapsed: Set<String>, current: String, entries: [SidebarEntry])?
+    /// Test seam: how often the sidebar's file tree was laid out.
+    private(set) var fileTreeBuildCountForTest = 0
     /// True iff the sidebar was actually drawn last frame (mode on + room for it).
     private var sidebarRendered = false
     /// Content viewport height from the last frame, for sidebar "reveal" jumps.
     private var lastContentHeight = 1
+    /// Where the last frame put the note, which is what a mouse report's screen
+    /// coordinates have to be read against: the sidebar and the tab strip take
+    /// their share of the terminal before the note gets any.
+    private var lastContentWidth = 80
+    private var lastContentLeft = 0
+    private var lastContentTop = 1
     /// Frames at full strength, then frames spent fading to invisible (~0.05s each).
     private let toastHoldFrames = 16
     private let toastFadeFrames = 18
@@ -1069,29 +1084,48 @@ class EditorApp {
     private func handleInput(_ data: Data) {
         guard var string = String(data: data, encoding: .utf8) else { return }
 
-        // Rejoin an ESC that arrived on its own with the bytes that follow it:
-        // together they form one escape sequence (arrow key, Option+key, …).
+        // Rejoin held bytes with what follows them: together they form one
+        // escape sequence (arrow key, Option+key, mouse report, …).
         if pendingEscapeWork != nil {
             pendingEscapeWork?.cancel()
             pendingEscapeWork = nil
-            string = "\u{1B}" + string
+            string = heldInput + string
+            heldInput = ""
         }
 
         // A lone ESC is ambiguous: the Escape key, or the start of a sequence
         // the terminal split across reads. Hold it briefly and decide then.
-        if string == "\u{1B}" {
+        if let tail = EditorApp.unfinishedSequence(in: string) {
+            heldInput = String(tail)
+            string.removeSubrange(tail.startIndex...)
             let work = DispatchWorkItem { [weak self] in
                 guard let self, self.pendingEscapeWork != nil else { return }
                 self.pendingEscapeWork = nil
-                self.processInput("\u{1B}")
+                let held = self.heldInput
+                self.heldInput = ""
+                self.processInput(held)
             }
             pendingEscapeWork = work
             DispatchQueue.main.asyncAfter(
                 deadline: .now() + EditorApp.escapeTimeout, execute: work)
-            return
+            if string.isEmpty { return }
         }
 
         processInput(string)
+    }
+
+    /// The tail of a chunk that may be the start of a sequence cut by the read.
+    /// A burst of wheel reports fills a read and gets cut anywhere; the rest of
+    /// a report handled on its own would be typed into the note as text.
+    private static func unfinishedSequence(in string: String) -> Substring? {
+        guard let escape = string.lastIndex(of: "\u{1B}") else { return nil }
+        let tail = string[escape...]
+        let report = "\u{1B}[<"
+        let unfinished = tail.hasPrefix(report)
+            ? tail.dropFirst(report.count).allSatisfy { "0123456789;".contains($0) }
+            : report.hasPrefix(tail)
+        guard unfinished, tail.startIndex == string.startIndex || string.contains(report) else { return nil }
+        return tail
     }
 
     private func processInput(_ string: String) {
@@ -1644,6 +1678,13 @@ class EditorApp {
     // Test hook: feed raw input through the real entry point (ESC reassembly
     // included), so tests exercise the same path as terminal reads.
     func handleInputForTest(_ s: String) { handleInput(Data(s.utf8)) }
+    /// Test hook: apply mouse reports to the last frame laid out, without
+    /// painting one sized to whatever terminal the tests run in.
+    func mouseReportsForTest(_ s: String) { _ = applyMouseEvents(parseMouseEvents(s) ?? []) }
+    var scrollOffsetForTest: Int { state.scrollOffset }
+    var commandPanelVisibleForTest: Bool { commandPanel?.isVisible ?? false }
+    var activeCursorColumnForTest: Int { state.document.cursorColumn }
+    var activeDocumentLinesForTest: [String] { state.document.lines }
     var activeTabForTest: Int { activeTab }
     var tabCountForTest: Int { states.count }
 
@@ -1804,6 +1845,10 @@ class EditorApp {
         let editorTotal = width - sideW - sep
         let gutter = gutterWidth()
         let contentWidth = editorTotal - gutter
+
+        lastContentWidth = contentWidth
+        lastContentLeft = sideW + sep
+        lastContentTop = showTabs ? 2 : 1
 
         state.setViewportWidth(contentWidth)
         state.setSingleRowLines(collapsedTableLines())
@@ -3831,18 +3876,22 @@ class EditorApp {
     /// and anchor, left drag (motion bit) → extend the selection. Consecutive
     /// presses within the click window select word / line (double / triple).
     private func handleMouseEvents(_ events: [(button: Int, x: Int, y: Int, release: Bool)]) {
-        let size = getTerminalSize()
+        if applyMouseEvents(events) { render() }
+    }
+
+    /// Whether anything changed and the frame needs repainting.
+    private func applyMouseEvents(_ events: [(button: Int, x: Int, y: Int, release: Bool)]) -> Bool {
         let gutter = gutterWidth()
-        let viewportWidth = size.width - gutter
-        let viewportHeight = size.height - 3
+        let viewportWidth = lastContentWidth
+        let viewportHeight = lastContentHeight
         var wheel = 0
         var changed = false
 
         for e in events {
-            // Screen row 1 is the top bar; content begins on row 2. The gutter
-            // sits left of the content, so subtract both to get a viewport cell.
-            let row = max(0, e.y - 2)
-            let col = max(0, e.x - 1 - gutter)
+            // Reports are 1-based screen cells; subtract what the frame put
+            // above and to the left of the note to get a viewport cell.
+            let row = max(0, e.y - 1 - lastContentTop)
+            let col = max(0, e.x - 1 - lastContentLeft - gutter)
             switch e.button {
             case 64: wheel -= 1                 // wheel up
             case 65: wheel += 1                 // wheel down
@@ -3874,7 +3923,7 @@ class EditorApp {
             state.scrollViewport(lines: wheel * 3, viewportHeight: viewportHeight, viewportWidth: viewportWidth)
             changed = true
         }
-        if changed { render() }
+        return changed
     }
 
     private func extractBracketedPaste(_ input: String) -> String? {
@@ -4173,8 +4222,13 @@ class EditorApp {
         case .files:
             let root = vaultRoot()
             let currentRel = relativeToRoot(absolutePath(state.filePath), root: root)
+            if let cached = fileTreeEntriesCache, cached.current == currentRel,
+               cached.collapsed == collapsedFolders {
+                return cached.entries
+            }
+            fileTreeBuildCountForTest += 1
             let rows = FileTree.rows(paths: fileTreeScan(), collapsed: collapsedFolders)
-            return rows.map { r in
+            let entries = rows.map { r -> SidebarEntry in
                 let indent = String(repeating: "  ", count: r.depth)
                 let icon = r.isDir ? (r.isCollapsed ? "▸ " : "▾ ") : ""
                 return SidebarEntry(text: indent + icon + r.name,
@@ -4182,6 +4236,8 @@ class EditorApp {
                                     isDir: r.isDir, isCollapsed: r.isCollapsed,
                                     path: r.path, line: 0)
             }
+            fileTreeEntriesCache = (collapsedFolders, currentRel, entries)
+            return entries
         }
     }
 

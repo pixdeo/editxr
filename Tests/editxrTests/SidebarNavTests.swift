@@ -33,6 +33,25 @@ final class SidebarNavTests: XCTestCase {
         return root
     }
 
+    // MARK: - One frame's worth of work
+
+    func testTheFileTreeIsBuiltOnceAcrossFrames() {
+        // Scrolling repaints the sidebar every frame; the tree it shows hasn't
+        // changed, and on a vault it is the most expensive thing in the frame.
+        let app = filesApp()
+        for _ in 0..<5 { _ = app.renderEditorLinesForTest(width: 100, height: 30) }
+        XCTAssertEqual(app.fileTreeBuildCountForTest, 1)
+    }
+
+    func testTheFileTreeFollowsAFolderCollapsing() {
+        let app = filesApp()
+        let before = app.sidebarEntryCountForTest()
+        app.focusSidebarForTest()
+        app.setSidebarSelectionForTest(0)
+        app.sidebarKeyForTest("\u{1B}[C")   // expand the folder under the selection
+        XCTAssertGreaterThan(app.sidebarEntryCountForTest(), before)
+    }
+
     private func filesApp() -> EditorApp {
         let root = makeProject()
         let state = EditorState(filePath: root + "/README.md")

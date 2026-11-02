@@ -368,7 +368,10 @@ class EditorState {
         lastViewportWidth = viewportWidth
         let wrapped = wordWrap && pendingEdit == nil && syntaxHighlighter == nil
 
-        let total = wrapped ? countVisualLines(viewportWidth: viewportWidth) : document.lines.count
+        // The document doesn't change while the cursor is dragged along, so one
+        // pass is enough for every row it steps through.
+        let rowsAbove = wrapped ? visualRowsAboveLines(viewportWidth: viewportWidth) : []
+        let total = rowsAbove.last ?? document.lines.count
         let endSlack = scrollPastEnd ? viewportHeight / 2 : 0
         let maxScroll = max(0, total - viewportHeight + endSlack)
         let newOffset = max(0, min(maxScroll, scrollOffset + delta))
@@ -376,27 +379,26 @@ class EditorState {
         scrollOffset = newOffset
         guard applied != 0 else { return }
 
-        func cursorVisual() -> Int { wrapped ? visualLineForCursor(viewportWidth: viewportWidth) : document.cursorLine }
+        func cursorVisual() -> Int {
+            guard wrapped else { return document.cursorLine }
+            return rowsAbove[document.cursorLine] + cursorRowInLine(viewportWidth: viewportWidth)
+        }
 
         if applied > 0 {
             // Scrolled down: drag the cursor down if it rose above the top margin.
             let topLimit = scrollOffset + scrollMargin
-            var steps = 0
-            while cursorVisual() < topLimit && steps <= applied {
+            while cursorVisual() < topLimit {
                 let line = document.cursorLine, col = document.cursorColumn
                 if wrapped { moveDownWrapped() } else { document.moveDown() }
                 if document.cursorLine == line && document.cursorColumn == col { break }
-                steps += 1
             }
         } else {
             // Scrolled up: drag the cursor up if it fell below the bottom margin.
             let bottomLimit = scrollOffset + viewportHeight - 1 - scrollMargin
-            var steps = 0
-            while cursorVisual() > bottomLimit && steps <= -applied {
+            while cursorVisual() > bottomLimit {
                 let line = document.cursorLine, col = document.cursorColumn
                 if wrapped { moveUpWrapped() } else { document.moveUp() }
                 if document.cursorLine == line && document.cursorColumn == col { break }
-                steps += 1
             }
         }
         document.clearSelection()
@@ -1304,8 +1306,22 @@ class EditorState {
         for i in 0..<document.cursorLine {
             visualLine += visualRowCount(lineIndex: i, width: viewportWidth)
         }
+        return visualLine + cursorRowInLine(viewportWidth: viewportWidth)
+    }
+
+    /// Rows above each line, plus the note's total as a final element.
+    private func visualRowsAboveLines(viewportWidth: Int) -> [Int] {
+        var above = [Int](repeating: 0, count: document.lines.count + 1)
+        for i in 0..<document.lines.count {
+            above[i + 1] = above[i] + visualRowCount(lineIndex: i, width: viewportWidth)
+        }
+        return above
+    }
+
+    /// Which of its own wrapped rows the cursor is on.
+    private func cursorRowInLine(viewportWidth: Int) -> Int {
         // A collapsed row is drawn whole: the cursor sits on its single row.
-        if singleRowLines.contains(document.cursorLine) { return visualLine }
+        if singleRowLines.contains(document.cursorLine) { return 0 }
         let currentLine = document.lines[document.cursorLine]
         let segments = wrapLineForNavigation(currentLine, width: viewportWidth)
         var segmentIndex = 0
@@ -1319,8 +1335,7 @@ class EditorState {
                 segmentIndex = idx
             }
         }
-        visualLine += segmentIndex
-        return visualLine
+        return segmentIndex
     }
     
     private func countVisualLines(viewportWidth: Int) -> Int {
