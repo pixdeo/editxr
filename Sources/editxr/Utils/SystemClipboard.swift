@@ -23,18 +23,40 @@ enum SystemClipboard {
         Tool(name: "xsel", args: ["--clipboard", "--output"]),
     ]
 
-    /// Write `text` to the system clipboard. Returns true if a tool accepted it.
-    @discardableResult
-    static func write(_ text: String) -> Bool {
-        for tool in writeTools {
-            guard let path = resolve(tool.name) else { continue }
-            if run(path, args: tool.args, input: text) { return true }
+    /// Writes run in order, off the main thread: the UI never waits on a helper.
+    private static let writes = DispatchQueue(label: "editxr.clipboard.write")
+
+    /// How long a helper gets to report failure. `wl-copy`, `xclip` and `xsel`
+    /// stay behind to own the selection, and on Linux a Foundation `Process` keeps
+    /// reporting running for as long as that daemon holds its inherited sockets —
+    /// waiting for it to exit never returns. A helper that fails does so at once,
+    /// so one that is still running after this has taken the text.
+    static let helperGrace: TimeInterval = 0.3
+
+    /// Write `text` to the system clipboard, in the background.
+    static func write(_ text: String) {
+        let helpers = writeTools.compactMap { tool in
+            resolve(tool.name).map { (path: $0, args: tool.args) }
         }
-        return false
+        write(text, using: helpers)
+    }
+
+    /// Offer `text` to each helper in turn until one takes it.
+    static func write(_ text: String, using helpers: [(path: String, args: [String])],
+                      grace: TimeInterval = helperGrace) {
+        writes.async {
+            for helper in helpers where run(helper.path, args: helper.args, input: text, grace: grace) { return }
+        }
+    }
+
+    /// Block until every write so far has been handed to a helper.
+    static func waitForPendingWrites() {
+        writes.sync {}
     }
 
     /// Read the system clipboard, or nil if unavailable/empty.
     static func read() -> String? {
+        waitForPendingWrites()
         for tool in readTools {
             guard let path = resolve(tool.name) else { continue }
             if let out = capture(path, args: tool.args) { return out }
@@ -55,7 +77,16 @@ enum SystemClipboard {
         return nil
     }
 
-    private static func run(_ path: String, args: [String], input: String) -> Bool {
+    /// A helper that exits before reading its input turns the write into SIGPIPE,
+    /// which ends the process unless it is ignored.
+    private static let brokenPipesIgnored: Void = {
+        #if !os(Windows)
+        signal(SIGPIPE, SIG_IGN)
+        #endif
+    }()
+
+    private static func run(_ path: String, args: [String], input: String, grace: TimeInterval) -> Bool {
+        _ = brokenPipesIgnored
         let p = Process()
         p.executableURL = URL(fileURLWithPath: path)
         p.arguments = args
@@ -64,10 +95,18 @@ enum SystemClipboard {
         p.standardOutput = FileHandle.nullDevice
         p.standardError = FileHandle.nullDevice
         do { try p.run() } catch { return false }
-        stdin.fileHandleForWriting.write(Data(input.utf8))
-        stdin.fileHandleForWriting.closeFile()
-        p.waitUntilExit()
-        return p.terminationStatus == 0
+
+        // Input past the pipe's capacity blocks until the helper reads it, so it
+        // gets its own thread: a helper that never reads can't hold up the rest.
+        let handle = stdin.fileHandleForWriting
+        DispatchQueue.global(qos: .utility).async {
+            try? handle.write(contentsOf: Data(input.utf8))   // failure shows in the exit status
+            try? handle.close()
+        }
+
+        let deadline = Date().addingTimeInterval(grace)
+        while p.isRunning && Date() < deadline { usleep(5_000) }
+        return p.isRunning || p.terminationStatus == 0
     }
 
     private static func capture(_ path: String, args: [String]) -> String? {
