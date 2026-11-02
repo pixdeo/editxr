@@ -188,6 +188,71 @@ final class VaultIndexTests: XCTestCase {
         XCTAssertLessThanOrEqual(tokens.count, VaultIndex.maxMarkedTerms)
     }
 
+    // MARK: - Singular and plural
+
+    /// A title that only holds the plurals, plus a short section whose one
+    /// matching word is the rare singular — the shape that used to bury the note.
+    private func pluralIndex() -> VaultIndex {
+        let ideas = (0..<8).map { "# Idea \($0)\nuna app simple" }.joined(separator: "\n")
+        return index([
+            ("Apps Verticals ideas.md", ideas),
+            ("Beat Bit Game.md", "# Resolución\npantalla vertical"),
+            ("Other.md", "# Notes\nunrelated content about nothing"),
+        ])
+    }
+
+    func testAGluedSingularFindsWhatItsPluralFinds() {
+        let index = pluralIndex()
+        let singular = index.search("appvertical", limit: 10).map(\.chunk)
+        let plural = index.search("appverticals", limit: 10).map(\.chunk)
+        XCTAssertEqual(singular, plural)
+        XCTAssertEqual(singular.first?.path, "Apps Verticals ideas.md")
+    }
+
+    func testAGluedQueryResolvesWhenOnlyThePluralsAreIndexed() {
+        let index = self.index([("Apps Verticals.md", "# Ideas\nnada mas")])
+        XCTAssertEqual(index.search("appvertical ", limit: 5).first?.chunk.path, "Apps Verticals.md")
+    }
+
+    func testAFinishedWordFindsItsOtherNumber() {
+        let index = self.index([
+            ("Actas.md", "# Reuniones\nnotas sueltas"),
+            ("Boxes.md", "# Boxes\ncontent"),
+        ])
+        XCTAssertEqual(index.search("reunion ", limit: 5).first?.chunk.path, "Actas.md")
+        XCTAssertEqual(index.search("nota ", limit: 5).first?.chunk.path, "Actas.md")
+        XCTAssertEqual(index.search("box ", limit: 5).first?.chunk.path, "Boxes.md")
+    }
+
+    func testAWordBeingTypedFindsItsSingular() {
+        let index = self.index([("A.md", "# Idea\nvertical")])
+        XCTAssertEqual(index.search("verticals", limit: 5).count, 1)
+    }
+
+    func testAnEsPluralOnlyStripsAfterAConsonantThatTakesIt() {
+        // "notes" is the plural of "note"; reading it as "not" + "es" would drag
+        // in every negative sentence in the vault.
+        let index = self.index([("Neg.md", "# X\nthis is not it")])
+        XCTAssertTrue(index.search("notes ", limit: 5).isEmpty)
+    }
+
+    func testBothNumbersAreMarkedInTheResults() {
+        let index = self.index([("Apps.md", "# Apps\nuna app")])
+        XCTAssertEqual(Set(index.matchTokens(for: "app ").map(\.text)), ["app", "apps"])
+        let typing = self.index([("A.md", "# Idea\nvertical")]).matchTokens(for: "verticals")
+        XCTAssertTrue(typing.contains { $0.matches("vertical") })
+    }
+
+    // MARK: - Ranking
+
+    func testAHitMatchingEveryWordOutranksABetterScoringPartialOne() {
+        // "vertical" is rare and the section short, so BM25 alone puts it first.
+        var notes = (0..<20).map { ("App\($0).md", "# X\napp") }
+        notes.append(("Both.md", "# X\napp vertical in a much longer note about something else entirely"))
+        notes.append(("Partial.md", "# X\nvertical vertical"))
+        XCTAssertEqual(index(notes).search("app vertical ", limit: 5).first?.chunk.path, "Both.md")
+    }
+
     // MARK: - Words typed without their spaces
 
     func testAGluedQueryIsCutIntoIndexedWords() {
@@ -210,10 +275,81 @@ final class VaultIndexTests: XCTestCase {
         }
     }
 
+    /// A note whose title is what is being looked for, beside a vault whose
+    /// short words can spell the same letters out of debris.
+    private func gluedIndex() -> VaultIndex {
+        index([
+            ("Apps Verticals ideas.md", "# Remini\nuna web para photo enhance"),
+            ("Debris.md", "# Varios\napp ver ve rt ic ti ca"),
+        ])
+    }
+
+    func testAGluedQueryFindsTheNoteAtEveryKeystroke() {
+        let index = gluedIndex()
+        for typed in ["appver", "appvert", "appverti", "appvertic", "appvertica", "appvertical"] {
+            XCTAssertEqual(index.search(typed, limit: 5).first?.chunk.path, "Apps Verticals ideas.md",
+                           "“\(typed)” lost the note")
+        }
+    }
+
+    func testAGluedQueryPrefersFewerPiecesOverDebris() {
+        XCTAssertEqual(gluedIndex().resolve("appvertic").map(\.typed), ["app", "vertic"])
+    }
+
+    func testAnyPieceOfAGluedQueryMayBeUnfinished() {
+        let index = gluedIndex()
+        for query in ["appvertideas", "appvertic ", "apvertic"] {
+            XCTAssertEqual(index.search(query, limit: 5).first?.chunk.path, "Apps Verticals ideas.md",
+                           "“\(query)” lost the note")
+        }
+    }
+
+    func testAGluedQueryIsSplitWhereItsPiecesOccurTogether() {
+        // "car" + "pet" and "carp" + "et" are equally clean cuts of the letters;
+        // only the second is something the notes actually say.
+        let index = self.index([
+            ("Apart.md", "# Car\nfish"),
+            ("Other.md", "# Pet\nlatin"),
+            ("Together.md", "# Carp\net"),
+        ])
+        XCTAssertEqual(index.search("carpet ", limit: 5).first?.chunk.path, "Together.md")
+    }
+
+    func testAGluedQueryMarksTheWordsItFound() {
+        let tokens = gluedIndex().matchTokens(for: "appvertic")
+        XCTAssertTrue(tokens.contains { $0.matches("verticals") })
+    }
+
     func testAWordThatSplitsIntoNothingIndexedStillFindsNothing() {
         // Splitting must not turn every miss into a hit made of fragments.
         let index = self.index([("A.md", "# X\nhello world")])
         XCTAssertTrue(index.search("zzzznotpresent ", limit: 5).isEmpty)
+    }
+
+    // MARK: - One keystroke's worth of work
+
+    func testAKeystrokeRepairsItsQueryOnce() {
+        // The panel asks for the hits and then for the words to mark; both need
+        // the same resolution, and the repairs are the expensive part of it.
+        let index = gluedIndex()
+        _ = index.search("appvertic", limit: 5)
+        _ = index.matchTokens(for: "appvertic")
+        XCTAssertEqual(index.repairCountForTest, 1)
+    }
+
+    func testAResolvedQueryDoesNotOutliveTheIndexItCameFrom() {
+        let index = self.index([("Old.md", "# X\nfirst")])
+        XCTAssertTrue(index.search("second", limit: 5).isEmpty)
+        index.indexForTest(notes: [(path: "New.md", text: "# X\nsecond")])
+        XCTAssertEqual(index.search("second", limit: 5).first?.chunk.path, "New.md")
+    }
+
+    func testASplitBoundsTheSpellingsWorthLookingFor() {
+        // A misspelling only beats a split at no more edits than the split has
+        // cuts, so with one cut a second edit can't change the answer.
+        let index = self.index([("Salud.md", "# Cáncer de Rubén\ncontrol en marzo")])
+        _ = index.search("cancerruben ", limit: 5)
+        XCTAssertEqual(index.editBudgetForTest, 1)
     }
 
     // MARK: - Misspelled words

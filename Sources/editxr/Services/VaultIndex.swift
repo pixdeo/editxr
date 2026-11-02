@@ -94,15 +94,27 @@ final class VaultIndex {
         }
     }
 
-    private var data = Snapshot()
+    private var data = Snapshot() {
+        didSet { lastResolved = nil }
+    }
+
+    /// The panel asks for a keystroke's hits and then for the words to mark, and
+    /// a repair is the one expensive step of either, so the answer is kept for
+    /// the second question.
+    private var lastResolved: (query: String, words: [ResolvedWord])?
+
+    /// Test seams: how often a word went through the repairs, and the most edits
+    /// the last one was willing to look for.
+    private(set) var repairCountForTest = 0
+    private(set) var editBudgetForTest = 0
 
     /// Ceiling on how many completions one prefix contributes, so a two-letter
     /// query can't turn a keystroke into a full-vocabulary scan.
     static let maxPrefixExpansion = 200
 
-    /// Bounds on cutting a glued word back into indexed terms. Two characters is
-    /// the shortest indexed term, and a word that needs more than four pieces is
-    /// far likelier to be noise assembled out of fragments than a real compound.
+    /// Bounds on cutting a glued word back into words. Two characters is the
+    /// shortest indexed term, and a word that needs more than four pieces is far
+    /// likelier to be noise assembled out of fragments than a real compound.
     static let minSegmentPart = 2
     static let maxSegmentParts = 4
     static let maxSegmentLength = 32
@@ -112,6 +124,10 @@ final class VaultIndex {
     /// only ever matched exactly, and the second edit is earned by length.
     static let minFuzzyLength = 4
     static let twoEditLength = 8
+
+    /// Shortest word that gets a singular or plural form. Below this the forms
+    /// are other words entirely: "la" and "las", "lo" and "los", "do" and "dos".
+    static let minNumberStem = 3
 
     /// How many alternatives of one word get marked in the results. A repair can
     /// return a couple of hundred; lighting up that many spellings is noise, and
@@ -221,13 +237,17 @@ final class VaultIndex {
 
     /// BM25 over the inverted index: only chunks containing a query term are
     /// touched, so this stays sub-millisecond on a large vault.
+    ///
+    /// Hits are ordered by how many query words they hold before their score: a
+    /// section holding every word is what was asked for, and one short section
+    /// holding just the rarest word must not bury it.
     func search(_ rawQuery: String, limit: Int) -> [VaultHit] {
         let words = resolve(rawQuery)
         guard !words.isEmpty, !data.chunks.isEmpty else { return [] }
 
         let k1 = 1.2, b = 0.75
         let n = Double(data.chunks.count)
-        var scores: [Int32: Double] = [:]
+        var totals: [Int32: (score: Double, words: Int)] = [:]
 
         for word in words {
             var best: [Int32: Double] = [:]
@@ -243,13 +263,19 @@ final class VaultIndex {
                     if score > best[chunkIndex, default: 0] { best[chunkIndex] = score }
                 }
             }
-            for (chunkIndex, score) in best { scores[chunkIndex, default: 0] += score }
+            for (chunkIndex, score) in best {
+                totals[chunkIndex, default: (0, 0)].score += score
+                totals[chunkIndex, default: (0, 0)].words += 1
+            }
         }
 
-        return scores
-            .sorted { $0.value == $1.value ? $0.key < $1.key : $0.value > $1.value }
+        return totals
+            .sorted {
+                if $0.value.words != $1.value.words { return $0.value.words > $1.value.words }
+                return $0.value.score == $1.value.score ? $0.key < $1.key : $0.value.score > $1.value.score
+            }
             .prefix(limit)
-            .map { VaultHit(chunk: data.chunks[Int($0.key)], score: $0.value) }
+            .map { VaultHit(chunk: data.chunks[Int($0.key)], score: $0.value.score) }
     }
 
     /// Turn a raw query into the words to score.
@@ -258,6 +284,7 @@ final class VaultIndex {
     /// it do the repairs run — a word run together with its neighbour, or a
     /// misspelling — so an ordinary query never pays for either.
     func resolve(_ rawQuery: String) -> [ResolvedWord] {
+        if let last = lastResolved, last.query == rawQuery { return last.words }
         let terms = VaultIndex.tokenize(rawQuery)
         guard !terms.isEmpty, !data.chunks.isEmpty else { return [] }
 
@@ -267,19 +294,28 @@ final class VaultIndex {
         var words: [ResolvedWord] = []
         for (i, term) in terms.enumerated() {
             let typing = isTyping && i == terms.count - 1
-            if typing {
-                let completions = expand(prefix: term)
-                if !completions.isEmpty {
-                    words.append(ResolvedWord(typed: term, isPrefix: true, terms: completions))
-                    continue
-                }
-            } else if data.postings[term] != nil {
-                words.append(ResolvedWord(typed: term, isPrefix: false, terms: [term]))
-                continue
+            if let word = typing ? prefixWord(term) : exactWord(term) {
+                words.append(word)
+            } else {
+                words.append(contentsOf: repair(term, typing: typing))
             }
-            words.append(contentsOf: repair(term, typing: typing))
         }
+        lastResolved = (rawQuery, words)
         return words
+    }
+
+    /// `term` as a word still being typed: everything it could become, plus its
+    /// other number, which it can't become by adding letters ("verticals" holds
+    /// "vertical" only that way).
+    private func prefixWord(_ term: String) -> ResolvedWord? {
+        let terms = expand(prefix: term) + inflections(of: term).filter { !$0.hasPrefix(term) }
+        return terms.isEmpty ? nil : ResolvedWord(typed: term, isPrefix: true, terms: terms)
+    }
+
+    /// `term` as a finished word, in either number.
+    private func exactWord(_ term: String) -> ResolvedWord? {
+        let forms = inflections(of: term)
+        return forms.isEmpty ? nil : ResolvedWord(typed: term, isPrefix: false, terms: forms)
     }
 
     /// A word the index has nothing for is one of two mistakes: words run
@@ -292,16 +328,16 @@ final class VaultIndex {
     /// "mer" is exactly the kind of debris that would otherwise bury
     /// "transformer".
     private func repair(_ term: String, typing: Bool) -> [ResolvedWord] {
-        let split = segment(term, prefixTail: typing)
-        let near = nearest(term)
+        repairCountForTest += 1
+        let split = segment(term, typing: typing)
+        let cuts = split.map { $0.count - 1 } ?? Int.max
 
-        if let near, near.distance <= (split.map { $0.count - 1 } ?? Int.max) {
+        // The cuts are what a misspelling has to beat, so looking further than
+        // that can't change the answer, and each extra edit is most of the cost.
+        if let near = nearest(term, atMost: cuts) {
             return [ResolvedWord(typed: term, isPrefix: false, terms: near.terms)]
         }
-        guard let split else { return [] }
-        return split.map {
-            ResolvedWord(typed: $0.typed, isPrefix: $0.isPrefix, terms: $0.terms)
-        }
+        return split ?? []
     }
 
     /// The words a query resolved to, for marking them in the results.
@@ -316,6 +352,10 @@ final class VaultIndex {
             if word.isPrefix {
                 guard seen.insert(word.typed).inserted else { continue }
                 tokens.append(TextMatch(text: word.typed, isPrefix: true))
+                for term in inflections(of: word.typed)
+                where !term.hasPrefix(word.typed) && seen.insert(term).inserted {
+                    tokens.append(TextMatch(text: term, isPrefix: false))
+                }
             } else {
                 for term in word.terms.prefix(VaultIndex.maxMarkedTerms)
                 where seen.insert(term).inserted {
@@ -333,57 +373,139 @@ final class VaultIndex {
         data.trie.completions(of: prefix, limit: VaultIndex.maxPrefixExpansion)
     }
 
-    /// Cut a glued word into indexed terms, fewest pieces first — "cancerruben"
-    /// into "cancer" + "ruben" — or nil when no clean cut exists.
+    /// The indexed singular and plural forms of `term`, itself included. Empty
+    /// when the index holds none of them.
     ///
-    /// `prefixTail` lets the last piece match as a prefix, so a compound still
-    /// resolves while its second half is being typed ("cancerrub").
-    private func segment(_ term: String, prefixTail: Bool) -> [ResolvedWord]? {
+    /// Number is the one variation typing can't get around: "vertical" and
+    /// "verticals" are the same word to whoever is searching. The set comes out
+    /// the same from either form, so both queries find the same notes.
+    private func inflections(of term: String) -> [String] {
+        VaultIndex.numberForms(of: term).filter { data.postings[$0] != nil }
+    }
+
+    /// Candidate singular and plural spellings of a word, for Spanish and English
+    /// alike: a vowel takes -s ("nota", "notas"), a consonant -s or -es ("app",
+    /// "apps"; "reunion", "reuniones"). Spellings no note holds fall away when
+    /// they are looked up, so a wrong guess here costs nothing.
+    static func numberForms(of term: String) -> [String] {
+        let takesEs: Set<Character> = ["n", "r", "l", "d", "z", "x", "s", "h", "j", "y"]
+        func isStem(_ word: Substring) -> Bool { word.count >= minNumberStem }
+
+        var stems = [term]
+        if term.hasSuffix("s"), !term.hasSuffix("ss") {
+            let single = term.dropLast()
+            if isStem(single) { stems.append(String(single)) }
+            // "notes" is "note", never "not": -es only comes off where -es goes on.
+            if term.hasSuffix("es"), let last = single.dropLast().last,
+               takesEs.contains(last), isStem(single.dropLast()) {
+                stems.append(String(single.dropLast()))
+            }
+        }
+
+        var forms = stems
+        for stem in stems where stem.count >= minNumberStem && !stem.hasSuffix("s") {
+            forms.append(stem + "s")
+            if let last = stem.last, takesEs.contains(last) { forms.append(stem + "es") }
+        }
+        var seen = Set<String>()
+        return forms.filter { seen.insert($0).inserted }
+    }
+
+    /// Cut a glued word back into the words it was typed from, so that it reads
+    /// exactly as if the spaces were there.
+    ///
+    /// Any piece may be unfinished ("appvertic" is "app" + "vertic…"), which
+    /// makes almost every string cuttable somehow, so the letters alone can't
+    /// choose. The notes do: fewest pieces first, keeping only cuts whose pieces
+    /// occur together in some section, and among those the one with the most
+    /// whole words, then the most sections.
+    ///
+    /// With no such cut, the fewest whole words still explain a query spanning
+    /// two notes ("cancerruben" with each word on its own). Nil when not even
+    /// those do.
+    private func segment(_ term: String, typing: Bool) -> [ResolvedWord]? {
         let chars = Array(term)
         let n = chars.count
         let minPart = VaultIndex.minSegmentPart
         guard n >= 2 * minPart, n <= VaultIndex.maxSegmentLength else { return nil }
+        // A piece being typed can be a single letter so far.
+        let minTail = typing ? 1 : minPart
 
-        // best[i] = fewest-piece split of the first i characters, nil if none.
-        // Every prefix it reads is already final: pieces are at least minPart
-        // long, so `start` was settled on an earlier pass.
-        var best: [[String]?] = Array(repeating: nil, count: n + 1)
-        best[0] = []
-        for end in minPart...n {
-            for start in 0...(end - minPart) {
-                guard let head = best[start], head.count < VaultIndex.maxSegmentParts else { continue }
-                let piece = String(chars[start..<end])
-                guard data.postings[piece] != nil else { continue }
-                if best[end] == nil || head.count + 1 < best[end]!.count { best[end] = head + [piece] }
+        var pieces: [String: ResolvedWord?] = [:]
+        var holders: [String: [UInt64]] = [:]
+
+        func word(_ start: Int, _ end: Int) -> ResolvedWord? {
+            let text = String(chars[start..<end])
+            let key = end == n ? text + "$" : text
+            if let known = pieces[key] { return known }
+            let found = end == n && typing ? prefixWord(text) : exactWord(text) ?? prefixWord(text)
+            pieces[key] = found
+            return found
+        }
+
+        /// Sections holding all of `cut`, by intersecting one bitset per piece.
+        func together(_ cut: [ResolvedWord]) -> Int {
+            var shared: [UInt64]?
+            for piece in cut {
+                let key = piece.typed + (piece.isPrefix ? "$" : "")
+                let bits = holders[key] ?? chunkBits(of: piece.terms)
+                holders[key] = bits
+                shared = shared.map { zip($0, bits).map { $0 & $1 } } ?? bits
+            }
+            return shared?.reduce(0) { $0 + $1.nonzeroBitCount } ?? 0
+        }
+
+        /// Visit every way of cutting `start...` into exactly `parts` pieces.
+        func walk(_ start: Int, parts: Int, cut: [ResolvedWord], visit: ([ResolvedWord]) -> Void) {
+            if parts == 1 {
+                if n - start >= minTail, let last = word(start, n) { visit(cut + [last]) }
+                return
+            }
+            let latest = n - minTail - (parts - 2) * minPart
+            guard start + minPart <= latest else { return }
+            for end in (start + minPart)...latest {
+                guard let piece = word(start, end) else { continue }
+                walk(end, parts: parts - 1, cut: cut + [piece], visit: visit)
             }
         }
-        if let whole = best[n], whole.count >= 2 {
-            return whole.map { ResolvedWord(typed: $0, isPrefix: false, terms: [$0]) }
-        }
-        guard prefixTail else { return nil }
 
-        // Longest head that splits cleanly, so the prefix left over is the
-        // shortest — and therefore the least ambiguous — tail. A one-character
-        // tail is allowed here: it is a prefix of a real term, not a term.
-        for cut in stride(from: n - 1, through: minPart, by: -1) {
-            guard let head = best[cut], !head.isEmpty else { continue }
-            let typed = String(chars[cut...])
-            let tail = expand(prefix: typed)
-            guard !tail.isEmpty else { continue }
-            return head.map { ResolvedWord(typed: $0, isPrefix: false, terms: [$0]) }
-                + [ResolvedWord(typed: typed, isPrefix: true, terms: tail)]
+        var wholeWords: [ResolvedWord]?
+        for parts in 2...VaultIndex.maxSegmentParts {
+            var best: (cut: [ResolvedWord], whole: Int, sections: Int)?
+            walk(0, parts: parts, cut: []) { cut in
+                let whole = cut.filter { !$0.isPrefix }.count
+                if wholeWords == nil, whole >= parts - (typing ? 1 : 0) { wholeWords = cut }
+                let sections = together(cut)
+                guard sections > 0 else { return }
+                if best.map({ (whole, sections) > ($0.whole, $0.sections) }) ?? true {
+                    best = (cut, whole, sections)
+                }
+            }
+            if let best { return best.cut }
         }
-        return nil
+        return wholeWords
+    }
+
+    /// Bitset over chunk indexes of the sections holding any of `terms`.
+    private func chunkBits(of terms: [String]) -> [UInt64] {
+        var bits = [UInt64](repeating: 0, count: data.chunks.count / 64 + 1)
+        for term in terms {
+            for (chunk, _) in data.postings[term] ?? [] {
+                bits[Int(chunk) >> 6] |= 1 << (UInt64(chunk) & 63)
+            }
+        }
+        return bits
     }
 
     /// Indexed terms closest to a word that matched nothing — the last resort
     /// before an empty results list. One dropped or swapped letter is the most
     /// common way a search misses, and it is indistinguishable from a term the
     /// vault simply doesn't hold unless the distance is measured.
-    private func nearest(_ term: String) -> (terms: [String], distance: Int)? {
+    private func nearest(_ term: String, atMost edits: Int) -> (terms: [String], distance: Int)? {
         let scalars = Array(term.unicodeScalars)
         guard scalars.count >= VaultIndex.minFuzzyLength else { return nil }
-        let budget = scalars.count >= VaultIndex.twoEditLength ? 2 : 1
+        let budget = min(edits, scalars.count >= VaultIndex.twoEditLength ? 2 : 1)
+        editBudgetForTest = budget
         return data.trie.nearest(scalars, maxDistance: budget, limit: VaultIndex.maxPrefixExpansion)
     }
 

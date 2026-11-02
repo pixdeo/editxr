@@ -103,6 +103,56 @@ final class TermTrieTests: XCTestCase {
         XCTAssertEqual(trie.completions(of: "反", limit: 5), ["反応"])
     }
 
+    func testNearestAgreesWithTheFullMatrixOnRandomWords() {
+        var seed: UInt64 = 42
+        func next(_ bound: Int) -> Int {
+            seed = seed &* 6364136223846793005 &+ 1442695040888963407
+            return Int((seed >> 33) % UInt64(bound))
+        }
+        func word(_ maxLength: Int) -> String {
+            String((0...next(maxLength)).map { _ in Array("abc")[next(3)] })
+        }
+        func distance(_ a: [Character], _ b: [Character]) -> Int {
+            var row = Array(0...b.count)
+            for i in 0..<a.count {
+                var diagonal = row[0]
+                row[0] = i + 1
+                for j in 0..<b.count {
+                    let cost = min(row[j + 1] + 1, row[j] + 1, diagonal + (a[i] == b[j] ? 0 : 1))
+                    diagonal = row[j + 1]
+                    row[j + 1] = cost
+                }
+            }
+            return row[b.count]
+        }
+
+        let vocabulary = (0..<150).map { _ in word(9) }
+        let trie = self.trie(vocabulary)
+        for _ in 0..<500 {
+            let query = word(11)
+            let budget = 1 + next(3)
+            let distances = Set(vocabulary).map { ($0, distance(Array(query), Array($0))) }
+            let closest = distances.map(\.1).min() ?? 0
+            let hit = trie.nearest(Array(query.unicodeScalars), maxDistance: budget, limit: 1000)
+            if closest > budget {
+                XCTAssertNil(hit, "“\(query)” within \(budget)")
+            } else {
+                XCTAssertEqual(hit?.distance, closest, "“\(query)” within \(budget)")
+                XCTAssertEqual(Set(hit?.terms ?? []),
+                               Set(distances.filter { $0.1 == closest }.map(\.0)),
+                               "“\(query)” within \(budget)")
+            }
+        }
+    }
+
+    func testNearestOnlyFillsTheCellsItsBudgetCanReach() {
+        // Cells further from the diagonal than the budget can't hold a match, so
+        // a long word must cost the width of the band rather than its own length.
+        let trie = self.trie(["abcdefghijklmnopqrstuvwxyz", "abcdefghijklmnopqrstuvwxyy"])
+        _ = nearest(trie, "abcdefghijklmnopqrstuvwxyq", max: 1)
+        XCTAssertLessThanOrEqual(trie.cellCountForTest, trie.nodeCountForTest * 3)
+    }
+
     func testDuplicateTermsAreStoredOnce() {
         let trie = self.trie(["deploy", "deploy", "deploys"])
         XCTAssertEqual(trie.completions(of: "deploy", limit: 10), ["deploy", "deploys"])

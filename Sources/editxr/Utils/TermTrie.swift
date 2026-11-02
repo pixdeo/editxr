@@ -28,6 +28,10 @@ final class TermTrie {
     private let terms: [String]
 
     var count: Int { terms.count }
+
+    /// Test seam: matrix cells and tree nodes the last `nearest` filled in.
+    private(set) var cellCountForTest = 0
+    private(set) var nodeCountForTest = 0
     var isEmpty: Bool { terms.isEmpty }
 
     init(terms: [String]) {
@@ -114,53 +118,96 @@ final class TermTrie {
     /// Only the nearest distance is returned: once something is one edit away,
     /// the two-edit candidates are noise beside it.
     func nearest(_ word: [Unicode.Scalar], maxDistance: Int, limit: Int) -> (terms: [String], distance: Int)? {
-        guard !word.isEmpty, !terms.isEmpty, limit > 0 else { return nil }
+        guard !word.isEmpty, !terms.isEmpty, limit > 0, maxDistance > 0 else { return nil }
 
-        var matches: [String] = []
-        var best = maxDistance + 1
+        // A term past `word.count + maxDistance` characters is too long to match,
+        // so that bounds the depth of the walk and the rows it needs. One row per
+        // depth, shared across the whole walk, instead of one allocated per node.
+        let stride = word.count + 2
+        let deepest = word.count + maxDistance
+        let unreachable = maxDistance + 1
+        var rows = [Int](repeating: unreachable, count: stride * (deepest + 1))
         // Row 0: turning the empty prefix into each prefix of the word costs one
         // deletion per character.
-        let firstRow = Array(0...word.count)
+        for j in 0...min(maxDistance, word.count) { rows[j] = j }
 
-        var child = nodes[0].firstChild
-        while child >= 0 {
-            walk(node: child, previous: firstRow, word: word,
-                 maxDistance: maxDistance, limit: limit, best: &best, matches: &matches)
-            child = nodes[Int(child)].nextSibling
+        let (found, best, cells, visited) = nodes.withUnsafeBufferPointer { nodes in
+            word.withUnsafeBufferPointer { word in
+                rows.withUnsafeMutableBufferPointer { rows -> ([Int32], Int, Int, Int) in
+                    var walk = NearWalk(nodes: nodes, word: word, rows: rows.baseAddress!,
+                                        stride: stride, deepest: deepest, maxDistance: maxDistance,
+                                        limit: limit, best: unreachable)
+                    var child = nodes[0].firstChild
+                    while child >= 0 {
+                        walk.visit(child, depth: 1)
+                        child = nodes[Int(child)].nextSibling
+                    }
+                    return (walk.matches, walk.best, walk.cells, walk.visited)
+                }
+            }
         }
-        guard !matches.isEmpty else { return nil }
-        return (matches, best)
+        cellCountForTest = cells
+        nodeCountForTest = visited
+        guard !found.isEmpty else { return nil }
+        return (found.map { terms[Int($0)] }, best)
     }
 
-    private func walk(node: Int32, previous: [Int], word: [Unicode.Scalar],
-                      maxDistance: Int, limit: Int, best: inout Int, matches: inout [String]) {
-        let scalar = nodes[Int(node)].scalar
-        var row = [Int](repeating: 0, count: word.count + 1)
-        row[0] = previous[0] + 1
-        var rowBest = row[0]
-        for j in 1...word.count {
-            let substitution = previous[j - 1] + (word[j - 1] == scalar ? 0 : 1)
-            row[j] = min(previous[j] + 1, row[j - 1] + 1, substitution)
-            rowBest = min(rowBest, row[j])
-        }
+    /// One `nearest` descent. Rows are filled only within `maxDistance` of the
+    /// diagonal: a cell further out already costs more than that, so the work per
+    /// node is the width of that band rather than the length of the word.
+    private struct NearWalk {
+        let nodes: UnsafeBufferPointer<Node>
+        let word: UnsafeBufferPointer<Unicode.Scalar>
+        let rows: UnsafeMutablePointer<Int>
+        let stride: Int
+        let deepest: Int
+        let maxDistance: Int
+        let limit: Int
+        var best: Int
+        var matches: [Int32] = []
+        var cells = 0
+        var visited = 0
 
-        let term = nodes[Int(node)].term
-        if term >= 0, row[word.count] <= min(best, maxDistance) {
-            if row[word.count] < best {
-                best = row[word.count]
-                matches.removeAll(keepingCapacity: true)
+        mutating func visit(_ node: Int32, depth: Int) {
+            let scalar = nodes[Int(node)].scalar
+            let previous = rows + (depth - 1) * stride
+            let row = previous + stride
+            let unreachable = maxDistance + 1
+            let last = word.count
+            let low = max(1, depth - maxDistance)
+            let high = min(last, depth + maxDistance)
+
+            // The cells either side of the band stand in for everything beyond
+            // it, so the next row reads "too far" there rather than a stale value.
+            row[low - 1] = min(depth, unreachable)
+            var rowBest = row[low - 1]
+            for j in low...high {
+                let substitution = previous[j - 1] + (word[j - 1] == scalar ? 0 : 1)
+                let cost = min(previous[j] + 1, row[j - 1] + 1, substitution)
+                row[j] = cost
+                if cost < rowBest { rowBest = cost }
             }
-            if matches.count < limit { matches.append(terms[Int(term)]) }
-        }
+            row[high + 1] = unreachable
+            cells += high - low + 1
+            visited += 1
 
-        // Every row below this one is at least `rowBest`, so a subtree that is
-        // already further than the best match cannot improve on it.
-        guard rowBest <= min(best, maxDistance) else { return }
-        var child = nodes[Int(node)].firstChild
-        while child >= 0 {
-            walk(node: child, previous: row, word: word,
-                 maxDistance: maxDistance, limit: limit, best: &best, matches: &matches)
-            child = nodes[Int(child)].nextSibling
+            let term = nodes[Int(node)].term
+            if term >= 0, high == last, row[last] <= min(best, maxDistance) {
+                if row[last] < best {
+                    best = row[last]
+                    matches.removeAll(keepingCapacity: true)
+                }
+                if matches.count < limit { matches.append(term) }
+            }
+
+            // Every row below this one is at least `rowBest`, so a subtree that
+            // is already further than the best match cannot improve on it.
+            guard depth < deepest, rowBest <= min(best, maxDistance) else { return }
+            var child = nodes[Int(node)].firstChild
+            while child >= 0 {
+                visit(child, depth: depth + 1)
+                child = nodes[Int(child)].nextSibling
+            }
         }
     }
 }
