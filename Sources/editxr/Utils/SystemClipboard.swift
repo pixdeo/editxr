@@ -105,7 +105,7 @@ enum SystemClipboard {
         }
 
         let deadline = Date().addingTimeInterval(grace)
-        while p.isRunning && Date() < deadline { usleep(5_000) }
+        while p.isRunning && Date() < deadline { Thread.sleep(forTimeInterval: 0.005) }
         return p.isRunning || p.terminationStatus == 0
     }
 

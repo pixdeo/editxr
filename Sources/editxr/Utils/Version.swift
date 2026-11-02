@@ -3,7 +3,7 @@ import Foundation
 /// App identity + CLI help text, shared by `main` and the welcome splash.
 enum AppInfo {
     static let name = "editxr"
-    static let version = "1.9.2"
+    static let version = "1.9.3"
     static let tagline = "a minimalist Markdown editor for the terminal"
 
     static var helpText: String {
