@@ -141,8 +141,8 @@ on any distro (Ubuntu, Debian, Alpine, Fedora, …) with no Swift runtime
 installed. To build from source instead, pass `FROM_SOURCE=1` to the installer.
 
 On Windows, unzip and run `editxr.exe` (best in Windows Terminal). The x64 build
-also runs on Windows on ARM via the OS's built-in x64 emulation. Clipboard, theme
-auto-detection and OpenAI OAuth sign-in fall back gracefully there for now.
+also runs on Windows on ARM via the OS's built-in x64 emulation. Clipboard and
+theme auto-detection fall back gracefully there for now.
 
 ## Build & run
 
@@ -176,9 +176,8 @@ the file-explorer sidebar on its primary file. The same action is available
 inside the editor as **Open vault** in the command palette.
 
 Requires macOS 12+ and a Swift 5.9+ toolchain. It also builds and runs on
-Linux and Windows (Swift 6+). On both, OpenAI OAuth sign-in is unavailable (the
-other LLM providers work as usual); on Windows, clipboard and terminal-theme
-auto-detection also fall back for now.
+Linux and Windows (Swift 6+). On Windows, clipboard and terminal-theme
+auto-detection fall back for now.
 
 ## Keybindings
 
@@ -226,8 +225,9 @@ Open the command palette (`Ctrl+P`) → **LLM settings** to pick a provider:
 
 - **LM Studio.** Talks to an OpenAI-compatible endpoint, by default
   `http://localhost:1234`.
-- **OpenAI.** Sign in via OAuth (set `OPENAI_OAUTH_CLIENT_ID` in your
-  environment first).
+- **OpenAI.** Set your API key from <https://platform.openai.com/api-keys> and
+  optionally a model (default `gpt-4o-mini`). ChatGPT subscriptions don't include
+  API access, so usage is billed to your OpenAI API account.
 - **OpenRouter.** Set your API key and a model
   (e.g. `anthropic/claude-3.5-sonnet`).
 - **Mock (offline).** A deterministic local transform for trying the edit/review

@@ -35,9 +35,8 @@ struct Config: Codable {
     var llmProvider: LLMProvider = .lmStudio
     var openRouterKey: String? = nil
     var openRouterModel: String? = nil
-    var openAIAccessToken: String? = nil
-    var openAIRefreshToken: String? = nil
-    var openAIExpiresAt: Double? = nil
+    var openAIKey: String? = nil
+    var openAIModel: String? = nil
     
     static let configPath: String = {
         let home = FileManager.default.homeDirectoryForCurrentUser.path

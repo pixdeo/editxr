@@ -88,9 +88,8 @@ class EditorState {
     var llmProvider: LLMProvider = .lmStudio
     private(set) var openRouterKey: String? = nil
     private(set) var openRouterModel: String? = nil
-    private(set) var openAIAccessToken: String? = nil
-    private(set) var openAIRefreshToken: String? = nil
-    private(set) var openAIExpiresAt: Double? = nil
+    private(set) var openAIKey: String? = nil
+    private(set) var openAIModel: String? = nil
     
     private var clipboard: String = ""
     private var savedTimer: DispatchWorkItem?
@@ -135,9 +134,8 @@ class EditorState {
         self.llmProvider = config.llmProvider
         self.openRouterKey = config.openRouterKey
         self.openRouterModel = config.openRouterModel
-        self.openAIAccessToken = config.openAIAccessToken
-        self.openAIRefreshToken = config.openAIRefreshToken
-        self.openAIExpiresAt = config.openAIExpiresAt
+        self.openAIKey = config.openAIKey
+        self.openAIModel = config.openAIModel
         
         loadFile()
         restoreCursorPosition()
@@ -436,15 +434,9 @@ class EditorState {
         config.llmProvider = llmProvider
         config.openRouterKey = openRouterKey
         config.openRouterModel = openRouterModel
-        config.openAIAccessToken = openAIAccessToken
-        config.openAIRefreshToken = openAIRefreshToken
-        config.openAIExpiresAt = openAIExpiresAt
+        config.openAIKey = openAIKey
+        config.openAIModel = openAIModel
         config.save()
-    }
-
-    var openAIIsSignedIn: Bool {
-        guard let token = openAIAccessToken else { return false }
-        return !token.isEmpty
     }
 
     func setLLMProvider(_ provider: LLMProvider) {
@@ -462,10 +454,13 @@ class EditorState {
         saveConfig()
     }
 
-    func setOpenAITokens(accessToken: String, refreshToken: String?, expiresAt: Double?) {
-        openAIAccessToken = accessToken
-        openAIRefreshToken = refreshToken
-        openAIExpiresAt = expiresAt
+    func setOpenAIKey(_ key: String) {
+        openAIKey = key
+        saveConfig()
+    }
+
+    func setOpenAIModel(_ model: String) {
+        openAIModel = model
         saveConfig()
     }
     

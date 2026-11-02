@@ -3,8 +3,8 @@ import XCTest
 
 final class AppInfoTests: XCTestCase {
     func testTaskTabFixReleaseIdentity() {
-        XCTAssertEqual(AppInfo.version, "1.9.1")
-        XCTAssertTrue(AppInfo.helpText.hasPrefix("editxr 1.9.1 —"))
+        XCTAssertEqual(AppInfo.version, "1.9.2")
+        XCTAssertTrue(AppInfo.helpText.hasPrefix("editxr 1.9.2 —"))
     }
 
     func testHelpDocumentsBareVault() {

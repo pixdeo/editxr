@@ -7,7 +7,7 @@ approach, and the concrete work items.
 
 **Scope of the first deliverable:** *core editing works* — the editor compiles
 on Windows, enters raw mode, reports terminal size, reads input, and renders via
-ANSI. Clipboard, theme auto-detection, and OAuth can start as graceful
+ANSI. Clipboard and theme auto-detection can start as graceful
 fallbacks/stubs.
 
 ---
@@ -40,14 +40,9 @@ fallbacks/stubs.
 | VT output enablement | implicit (terminal already in VT) | — | `SetConsoleMode` with `ENABLE_VIRTUAL_TERMINAL_PROCESSING` + `DISABLE_NEWLINE_AUTO_RETURN` |
 | Theme detection | reads `/dev/tty` + `poll()` for OSC 11 reply | `Theme.swift:28-50` | No `/dev/tty`; skip the query, fall back to `COLORFGBG`/default dark |
 | Clipboard | `pbcopy`/`xclip`/`wl-copy`; PATH split on `:` | `SystemClipboard.swift` | `clip.exe` (write) / `powershell Get-Clipboard` (read); PATH split on `;` |
-| Open browser (OAuth) | `/usr/bin/open` | `OpenAIOAuth.swift:119` | Already gated out — see below |
 
 ### Already handled
 
-- **OAuth / OpenAI sign-in** is wrapped in
-  `#if canImport(CryptoKit) && canImport(Network)`. Neither imports on Windows,
-  so it compiles to the existing stub ("not available on this platform"). No work
-  needed for the core deliverable.
 - **`Package.swift`** declares `platforms: [.macOS(.v12)]`. That only sets Apple
   minimum versions; it does **not** restrict SwiftPM from building on Windows. No
   change required.
@@ -99,8 +94,6 @@ symbols directly.
 ### Out of scope for now
 
 - Mouse reporting parity on legacy conhost (works on Windows Terminal).
-- OAuth browser flow on Windows (gated out; revisit if CryptoKit/Network land or
-  a swift-crypto path is added).
 - Installer / packaging / code signing for Windows.
 
 ---

@@ -42,7 +42,7 @@ Lint/format:
 - Sources/editxr/main.swift: CLI entry point.
 - Sources/editxr/App: editor app lifecycle and rendering.
 - Sources/editxr/Models: editor state and data models.
-- Sources/editxr/Services: network and OAuth integration.
+- Sources/editxr/Services: network and LLM integration.
 - Sources/editxr/Views: TUI overlays and panels.
 - Sources/editxr/Utils: key bindings, theming, markdown parsing.
 
@@ -60,7 +60,7 @@ Lint/format:
 
 - User config file: ~/.config/editxr/config.json
 - LLM provider defaults to LM Studio (http://localhost:1234).
-- OpenAI OAuth is optional and driven by env vars.
+- OpenAI and OpenRouter use API keys set from the command palette.
 
 ## Memory policy (SimpleMem)
 
@@ -96,7 +96,7 @@ Lint/format:
 
 - Types: PascalCase (EditorState, LLMService).
 - Members and functions: lowerCamelCase (toggleViewMode).
-- Enum cases: lowerCamelCase (openaiOAuth, processing).
+- Enum cases: lowerCamelCase (openAI, processing).
 - Use descriptive, domain-specific names over abbreviations.
 
 ### Access control
@@ -114,7 +114,7 @@ Lint/format:
 ### Error handling
 
 - Use `Result` and `LocalizedError` for user-facing operations.
-- Map network failures to typed errors (see LLMError, OAuthError).
+- Map network failures to typed errors (see LLMError).
 - Avoid silent failures unless intentionally non-fatal.
 - If you must ignore an error, add a brief reason.
 

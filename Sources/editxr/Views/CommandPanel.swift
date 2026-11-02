@@ -61,7 +61,6 @@ final class CommandPanel {
         case hidden
         case browsing
         case input(InputField)
-        case oauth(url: String, message: String)
         case error(String)
     }
 
@@ -96,11 +95,6 @@ final class CommandPanel {
     var isVisible: Bool {
         if case .hidden = state { return false }
         return true
-    }
-
-    var isOAuthInProgress: Bool {
-        if case .oauth = state { return true }
-        return false
     }
 
     /// Set the root level from a generator so the panel can rebuild it (for live
@@ -178,11 +172,6 @@ final class CommandPanel {
     /// Switch the current level into a single-field text input.
     func beginInput(prompt: String, value: String, isSecret: Bool, onSubmit: @escaping (String) -> Void) {
         state = .input(InputField(prompt: prompt, value: value, isSecret: isSecret, onSubmit: onSubmit))
-        onStateChanged?()
-    }
-
-    func setOAuthStatus(url: String, message: String) {
-        state = .oauth(url: url, message: message)
         onStateChanged?()
     }
 
@@ -292,7 +281,7 @@ final class CommandPanel {
             handleBrowsingKey(char)
         case .input:
             handleInputKey(char)
-        case .oauth, .error:
+        case .error:
             if char == Key.escape { hide() }
         case .hidden:
             break
@@ -367,7 +356,7 @@ final class CommandPanel {
 
         let depthBefore = stack.count
         cmd.action()
-        // If the action navigated (pushed a submenu, opened input/OAuth, hid),
+        // If the action navigated (pushed a submenu, opened input, hid),
         // leave it. Keep-open commands refresh the level in place so labels /
         // markers update — even when the toggle was reached via search, where
         // re-generating rebuilds the flattened result list. Everything else is a
@@ -441,9 +430,6 @@ final class CommandPanel {
                                      height: height, wide: wide)
         case .input(let field):
             content = renderInput(field, boxWidth: boxWidth, contentWidth: contentWidth)
-        case .oauth(let url, let message):
-            content = renderSimple(["Sign in to OpenAI", "", message, url, "", "Esc cancel"],
-                                   boxWidth: boxWidth, contentWidth: contentWidth)
         case .error(let msg):
             content = renderSimple(["Error", "", msg, "", "Esc close"],
                                    boxWidth: boxWidth, contentWidth: contentWidth)

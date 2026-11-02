@@ -82,7 +82,8 @@ struct LLMResult {
 class LLMService {
     var config: LLMConfig
     var provider: LLMProvider = .lmStudio
-    var openAIAccessToken: String? = nil
+    var openAIKey: String? = nil
+    var openAIModel: String? = nil
     var openRouterKey: String? = nil
     var openRouterModel: String? = nil
 
@@ -102,9 +103,8 @@ class LLMService {
         self.config = config
     }
 
-    func setProvider(_ provider: LLMProvider, openAIAccessToken: String?) {
+    func setProvider(_ provider: LLMProvider) {
         self.provider = provider
-        self.openAIAccessToken = openAIAccessToken
     }
 
     /// Resolve the OpenAI-compatible endpoint for the current provider.
@@ -113,10 +113,11 @@ class LLMService {
         switch provider {
         case .lmStudio:
             return (config.baseURL, config.model, nil)
-        case .openaiOAuth:
+        case .openAI:
+            let saved = openAIModel?.isEmpty == false ? openAIModel : nil
             return ("https://api.openai.com",
-                    ProcessInfo.processInfo.environment["OPENAI_MODEL"] ?? "gpt-4o-mini",
-                    openAIAccessToken)
+                    saved ?? ProcessInfo.processInfo.environment["OPENAI_MODEL"] ?? "gpt-4o-mini",
+                    openAIKey)
         case .openRouter:
             return ("https://openrouter.ai/api",
                     (openRouterModel?.isEmpty == false ? openRouterModel! : "openai/gpt-4o-mini"),
@@ -128,8 +129,10 @@ class LLMService {
 
     /// Providers that authenticate with a Bearer token (and require one).
     private var requiresBearer: Bool {
-        provider == .openaiOAuth || provider == .openRouter
+        provider == .openAI || provider == .openRouter
     }
+
+    var endpointForTest: (base: String, model: String, bearer: String?) { endpoint() }
 
     /// Cancel any ongoing request
     func cancel() {

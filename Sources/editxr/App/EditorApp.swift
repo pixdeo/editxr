@@ -104,7 +104,6 @@ class EditorApp {
     private var mouseClickCount = 0
     private let llmService = LLMService()
     private var llmModal: LLMModal?
-    private let openAIOAuth = OpenAIOAuth()
     private var commandPanel: CommandPanel?
     /// Whole-line range the next LLM result should review against, captured
     /// when the modal opens (selection or current block).
@@ -826,20 +825,36 @@ class EditorApp {
         cmds.append(PaletteCommand(title: "Provider: LM Studio", shortcut: mark(.lmStudio)) { [weak self] in
             self?.selectProvider(.lmStudio)
         })
-        if state.openAIIsSignedIn {
-            cmds.append(PaletteCommand(title: "Provider: OpenAI", shortcut: mark(.openaiOAuth)) { [weak self] in
-                self?.selectProvider(.openaiOAuth)
-            })
-        } else {
-            cmds.append(PaletteCommand(title: "Sign in to OpenAI", shortcut: "") { [weak self] in
-                self?.startOpenAIOAuth()
-            })
-        }
+        cmds.append(submenuCommand("OpenAI") { [weak self] in self?.openAICommands() ?? [] })
         cmds.append(submenuCommand("OpenRouter") { [weak self] in self?.openRouterCommands() ?? [] })
         cmds.append(PaletteCommand(title: "Provider: Mock (offline)", shortcut: mark(.mock)) { [weak self] in
             self?.selectProvider(.mock)
         })
         return cmds
+    }
+
+    private func openAICommands() -> [PaletteCommand] {
+        let keyLabel = (state.openAIKey?.isEmpty == false) ? "set" : "not set"
+        let modelLabel = (state.openAIModel?.isEmpty == false) ? state.openAIModel! : "default"
+        return [
+            PaletteCommand(title: "Set API key", shortcut: keyLabel) { [weak self] in
+                guard let self = self else { return }
+                self.commandPanel?.beginInput(prompt: "OpenAI API key", value: self.state.openAIKey ?? "", isSecret: true) { [weak self] key in
+                    self?.state.setOpenAIKey(key)
+                    self?.syncLLMService()
+                }
+            },
+            PaletteCommand(title: "Set model", shortcut: modelLabel) { [weak self] in
+                guard let self = self else { return }
+                self.commandPanel?.beginInput(prompt: "OpenAI model (e.g. gpt-4o-mini)", value: self.state.openAIModel ?? "", isSecret: false) { [weak self] model in
+                    self?.state.setOpenAIModel(model)
+                    self?.syncLLMService()
+                }
+            },
+            PaletteCommand(title: "Use OpenAI", shortcut: state.llmProvider == .openAI ? "current" : "") { [weak self] in
+                self?.selectProvider(.openAI)
+            },
+        ]
     }
 
     private func openRouterCommands() -> [PaletteCommand] {
@@ -1199,9 +1214,6 @@ class EditorApp {
                     toggleCommandPanel()
                     return
                 }
-                if char == Key.escape && panel.isOAuthInProgress {
-                    openAIOAuth.cancel()
-                }
                 panel.handleKey(char)
             }
             render()
@@ -1428,7 +1440,9 @@ class EditorApp {
     private func syncLLMService() {
         llmService.openRouterKey = state.openRouterKey
         llmService.openRouterModel = state.openRouterModel
-        llmService.setProvider(state.llmProvider, openAIAccessToken: state.openAIAccessToken)
+        llmService.openAIKey = state.openAIKey
+        llmService.openAIModel = state.openAIModel
+        llmService.setProvider(state.llmProvider)
     }
 
     /// Start/stop a ~10fps re-render loop while the LLM spinner is on screen.
@@ -1672,6 +1686,7 @@ class EditorApp {
     /// be asserted without driving the whole panel.
     func vaultMenuTitlesForTest() -> [String] { vaultMenuCommands().map(\.title) }
     func openConfiguredVaultForTest() { openConfiguredVault() }
+    func llmProviderTitlesForTest() -> [String] { llmSettingsCommands().map(\.title) }
     var activeCursorLineForTest: Int { state.document.cursorLine }
     var activeFileForTest: String { state.filePath }
 
@@ -2092,7 +2107,6 @@ class EditorApp {
     private func toggleCommandPanel() {
         guard let panel = commandPanel else { return }
         if panel.isVisible {
-            openAIOAuth.cancel()
             panel.hide()
         } else {
             panel.setRoot { [weak self] in self?.buildCommands() ?? [] }
@@ -2101,27 +2115,6 @@ class EditorApp {
         render()
     }
 
-    private func startOpenAIOAuth() {
-        commandPanel?.setOAuthStatus(url: "", message: "Starting...")
-        openAIOAuth.start(
-            onUpdate: { [weak self] url, message in
-                self?.commandPanel?.setOAuthStatus(url: url, message: message)
-            },
-            completion: { [weak self] result in
-                guard let self = self else { return }
-                switch result {
-                case .success(let tokens):
-                    self.state.setOpenAITokens(accessToken: tokens.accessToken, refreshToken: tokens.refreshToken, expiresAt: tokens.expiresAt)
-                    self.state.setLLMProvider(.openaiOAuth)
-                    self.syncLLMService()
-                    self.commandPanel?.hide()
-                case .failure(let err):
-                    self.commandPanel?.setError(err.localizedDescription)
-                }
-            }
-        )
-    }
-    
     private func renderNormalMode(width: Int, height: Int, gutterWidth: Int) -> [String] {
         var output: [String] = []
         let doc = state.document
@@ -3792,7 +3785,9 @@ class EditorApp {
         // Left: the AI provider (and model, if set). Right: command/help shortcuts,
         // right-aligned with one column of padding from the edge.
         var providerText = state.llmProvider.displayName
-        if state.llmProvider == .openRouter, let model = state.openRouterModel, !model.isEmpty {
+        let chosenModel = state.llmProvider == .openRouter ? state.openRouterModel
+            : state.llmProvider == .openAI ? state.openAIModel : nil
+        if let model = chosenModel, !model.isEmpty {
             providerText += " · \(model)"
         }
         let left = "\(Theme.textMuted)\(providerText)\(Theme.reset)"
